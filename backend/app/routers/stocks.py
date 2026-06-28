@@ -34,10 +34,14 @@ QUOTE_SORTABLE_FIELDS = {
 
 
 def _get_latest_trade_date(session: Session) -> Optional[date]:
-    quote = session.exec(
-        select(StockDailyQuote).order_by(StockDailyQuote.trade_date.desc())
+    # 只取最新交易日：必须显式 limit(1)，否则 SQLAlchemy 的 .first() 会先把
+    # 全表(17 万+行)行情都实例化成 ORM 对象再取首行，造成数秒延迟与内存飙升。
+    latest = session.exec(
+        select(StockDailyQuote.trade_date)
+        .order_by(StockDailyQuote.trade_date.desc())
+        .limit(1)
     ).first()
-    return quote.trade_date if quote else None
+    return latest
 
 
 @router.get("")
@@ -136,6 +140,7 @@ def get_stock(code: str, session: Session = Depends(get_session)):
         select(StockDailyQuote)
         .where(StockDailyQuote.stock_code == code)
         .order_by(StockDailyQuote.trade_date.desc())
+        .limit(1)
     ).first()
 
     return _stock_with_quote(stock, quote, include_detail=True)
