@@ -71,9 +71,9 @@ class PigletStrategy(StrategyBase):
         if not candidate_codes:
             return []
 
-        # 3. 取窗口内每日最低价 {(code, date): low}
+        # 3. 取窗口内每日最低价 {(code, date): low}，以及最新收盘价 {code: close}
         last_date = trade_dates[-1]
-        low_map = self._fetch_lows(pro, trade_dates, set(candidate_codes))
+        low_map, latest_close_map = self._fetch_lows(pro, trade_dates, set(candidate_codes))
 
         # 4. 首板不破：首板日之后每个交易日 low >= base_close
         survivors: List[Dict] = []
@@ -119,10 +119,18 @@ class PigletStrategy(StrategyBase):
             net_amount = net_amount_map.get(code)  # 单位：元
             has_dragon = net_amount is not None
 
+            # 首板至今涨幅：(最新收盘 - 首板收盘) / 首板收盘
+            latest_close = latest_close_map.get(code)
+            since_first_pct: Optional[float] = None
+            if latest_close is not None and base_close:
+                since_first_pct = (latest_close - base_close) / base_close * 100
+
             parts = [
                 f"首板 {fld:%m-%d}（收盘 {base_close:.2f}）",
                 f"其后 {hold_days} 个交易日最低价未破首板价",
             ]
+            if since_first_pct is not None:
+                parts.append(f"首板至今 {since_first_pct:+.2f}%")
             if has_dragon:
                 parts.append(f"游资介入，龙虎榜净买 {net_amount / 1e8:.2f}亿")
             else:
@@ -142,6 +150,8 @@ class PigletStrategy(StrategyBase):
                         "hold_days": hold_days,
                         "has_dragon": has_dragon,
                         "net_amount": net_amount,
+                        "latest_close": latest_close,
+                        "since_first_pct": since_first_pct,
                     },
                 )
             )
@@ -186,9 +196,16 @@ class PigletStrategy(StrategyBase):
 
     def _fetch_lows(
         self, pro, trade_dates: List[date], codes: set
-    ) -> Dict[Tuple[str, date], float]:
-        """按交易日批量取 daily 行情，返回 {(code, date): low}，仅保留候选股票。"""
+    ) -> Tuple[Dict[Tuple[str, date], float], Dict[str, float]]:
+        """按交易日批量取 daily 行情。
+
+        返回 (low_map, latest_close_map)：
+          - low_map: {(code, date): low}，用于"首板不破"校验
+          - latest_close_map: {code: 窗口内最后一个交易日的收盘价}，用于计算首板至今涨幅
+        """
         low_map: Dict[Tuple[str, date], float] = {}
+        latest_close_map: Dict[str, float] = {}
+        last_date = trade_dates[-1] if trade_dates else None
         for d in trade_dates:
             try:
                 df = pro.daily(trade_date=d.strftime("%Y%m%d"))
@@ -203,7 +220,11 @@ class PigletStrategy(StrategyBase):
                 low = self._safe_float(row.get("low"))
                 if low is not None:
                     low_map[(code, d)] = low
-        return low_map
+                if d == last_date:
+                    close = self._safe_float(row.get("close"))
+                    if close is not None:
+                        latest_close_map[code] = close
+        return low_map, latest_close_map
 
     def _fetch_top_list_net(
         self, pro, trade_dates: List[date], codes: set

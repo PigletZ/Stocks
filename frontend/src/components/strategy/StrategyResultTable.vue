@@ -10,6 +10,7 @@
           <th>股票</th>
           <th>首板日期</th>
           <th>不破天数</th>
+          <th>首板至今涨幅</th>
           <th>游资介入</th>
           <th>龙虎榜净买</th>
           <th>参考价</th>
@@ -25,6 +26,7 @@
           </td>
           <td>{{ formatDate(item.extra?.first_limit_date) }}</td>
           <td>{{ item.extra?.hold_days ?? '-' }}</td>
+          <td :class="pctClass(item.extra?.since_first_pct)">{{ formatPct(item.extra?.since_first_pct) }}</td>
           <td>
             <span v-if="item.extra?.has_dragon" class="tag-dragon">游资</span>
             <span v-else class="tag-none">无</span>
@@ -99,6 +101,17 @@ function formatYi(amount?: number | null) {
   return `${(amount / 1e8).toFixed(2)}亿`
 }
 
+function formatPct(pct?: number | null) {
+  if (pct === null || pct === undefined) return '-'
+  const sign = pct > 0 ? '+' : ''
+  return `${sign}${pct.toFixed(2)}%`
+}
+
+function pctClass(pct?: number | null) {
+  if (pct === null || pct === undefined) return ''
+  return pct > 0 ? 'up' : pct < 0 ? 'down' : ''
+}
+
 function scoreStyle(score: number) {
   const ratio = score / 100
   const r = Math.round(239 + (34 - 239) * ratio)
@@ -171,6 +184,16 @@ td {
   color: #d1d5db;
   line-height: 1.5;
   max-width: 400px;
+}
+
+td.up {
+  color: #ef4444;
+  font-weight: 600;
+}
+
+td.down {
+  color: #22c55e;
+  font-weight: 600;
 }
 
 .tag-dragon {
