@@ -54,6 +54,11 @@
           v-if="activeTab === 'dragon-tiger'"
           @add-watchlist="addToWl"
         />
+
+        <TopGainersTab
+          v-if="activeTab === 'top-gainers'"
+          @add-watchlist="addToWl"
+        />
       </div>
     </div>
   </div>
@@ -64,6 +69,7 @@ import { ref, onMounted, watch, computed } from 'vue'
 import DailyTab from '../components/overview/DailyTab.vue'
 import LimitTab from '../components/overview/LimitTab.vue'
 import DragonTigerTab from '../components/overview/DragonTigerTab.vue'
+import TopGainersTab from '../components/overview/TopGainersTab.vue'
 import {
   fetchDailyOverview,
   fetchTradeDates,
@@ -104,6 +110,7 @@ const tabs = [
   { key: 'limit-up', label: '涨停' },
   { key: 'limit-down', label: '跌停' },
   { key: 'dragon-tiger', label: '龙虎榜' },
+  { key: 'top-gainers', label: '涨幅榜' },
 ]
 
 // 日概览

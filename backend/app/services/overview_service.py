@@ -1,10 +1,16 @@
 from datetime import date, datetime, timedelta
 from typing import List, Dict, Optional
+import logging
+
+from sqlalchemy import func
 from sqlmodel import Session, select
 import pandas as pd
 import tushare as ts
 
 from ..config import settings
+
+
+logger = logging.getLogger(__name__)
 
 
 class OverviewService:
@@ -370,12 +376,15 @@ class OverviewService:
         order: str = "desc",
         offset: int = 0,
         limit: int = 20,
+        session: Optional[Session] = None,
     ) -> dict:
         """获取龙虎榜数据（Tushare top_list），支持排序与分页。
 
         未指定日期或指定为今天但数据尚未更新时，自动回退到最近有数据的交易日。
+        默认排除 ST、退市、科创板、创业板、北交所及次新股。
         """
         d = target_date or date.today()
+        effective_date = d
         df = self._fetch_top_list_for_date(d)
         if df is None or df.empty:
             should_fallback = target_date is None or d == date.today()
@@ -383,6 +392,7 @@ class OverviewService:
                 prev_date = self._get_previous_trade_date(d)
                 if prev_date:
                     df = self._fetch_top_list_for_date(prev_date)
+                    effective_date = prev_date
         if df is None or df.empty:
             return {"total": 0, "items": []}
 
@@ -390,6 +400,34 @@ class OverviewService:
         # Tushare top_list 的 net_amount 单位为"元"，直接保留
         df = df.copy()
         df["code"] = df["ts_code"].astype(str).apply(self._ts_code_to_code)
+
+        # 基础过滤：ST、退市、科创、创业、北交、次新股
+        if session is not None:
+            from ..models import Stock
+            from ..strategies.filters import apply_base_filters
+
+            codes = df["code"].dropna().unique().tolist()
+            # 识别本地 Stock 表缺失的代码
+            stocks = session.exec(select(Stock).where(Stock.code.in_(codes))).all()
+            stock_map = {s.code: s for s in stocks}
+            missing_codes = set(codes) - set(stock_map.keys())
+            if missing_codes:
+                logger.warning(
+                    "龙虎榜过滤发现本地 Stock 表缺失代码: %s",
+                    sorted(missing_codes),
+                )
+
+            filtered_codes = apply_base_filters(codes, effective_date, session)
+            before_count = len(df)
+            df = df[df["code"].isin(filtered_codes)].copy()
+            after_count = len(df)
+            if before_count != after_count:
+                logger.info(
+                    "龙虎榜基础过滤: %d 条 -> %d 条 (过滤 %d 条)",
+                    before_count,
+                    after_count,
+                    before_count - after_count,
+                )
 
         # 排序
         valid_sort = {
@@ -419,6 +457,242 @@ class OverviewService:
         ).to_dict("records")
 
         return {"total": total, "items": items}
+
+    def fetch_top_gainers(
+        self,
+        target_date: date,
+        session: Session,
+    ) -> dict:
+        """获取5日/10日/20日涨幅榜（基于 StockDailyQuote 本地缓存，缺失时从 Tushare 补齐）。
+
+        返回结构：
+        {
+            "target_date": "YYYY-MM-DD",
+            "effective_date": "YYYY-MM-DD",
+            "five_day": [...],
+            "ten_day": [...],
+            "twenty_day": [...],
+        }
+        """
+        from ..models import Stock, StockDailyQuote
+        from ..services.tushare_stock_service import TushareStockService
+        from ..strategies.filters import apply_base_filters
+
+        effective_date = self._resolve_effective_quote_date(target_date, session)
+        if effective_date is None:
+            return {
+                "target_date": target_date.isoformat(),
+                "effective_date": None,
+                "five_day": [],
+                "ten_day": [],
+                "twenty_day": [],
+            }
+
+        lookbacks = self._get_lookback_trade_dates(effective_date, [5, 10, 20])
+        five_base = lookbacks.get(5)
+        ten_base = lookbacks.get(10)
+        twenty_base = lookbacks.get(20)
+
+        needed_dates = {d for d in (effective_date, five_base, ten_base, twenty_base) if d is not None}
+        self._ensure_daily_quotes(needed_dates, session)
+
+        rows = session.exec(
+            select(StockDailyQuote, Stock)
+            .join(Stock, StockDailyQuote.stock_code == Stock.code)
+            .where(StockDailyQuote.trade_date.in_(needed_dates))
+        ).all()
+
+        quote_map = {(q.stock_code, q.trade_date): q for q, _ in rows}
+        stock_map = {q.stock_code: s for q, s in rows}
+
+        return {
+            "target_date": target_date.isoformat(),
+            "effective_date": effective_date.isoformat(),
+            "five_day": self._build_gainer_ranking(
+                effective_date, five_base, quote_map, stock_map, session
+            ),
+            "ten_day": self._build_gainer_ranking(
+                effective_date, ten_base, quote_map, stock_map, session
+            ),
+            "twenty_day": self._build_gainer_ranking(
+                effective_date, twenty_base, quote_map, stock_map, session
+            ),
+        }
+
+    def _resolve_effective_quote_date(
+        self,
+        target_date: date,
+        session: Session,
+    ) -> Optional[date]:
+        """确定有效行情日期：优先本地最新交易日，若落后交易日历则尝试从 Tushare 补齐。"""
+        from ..models import StockDailyQuote
+        from ..services.tushare_stock_service import TushareStockService
+
+        db_latest = session.exec(
+            select(StockDailyQuote.trade_date)
+            .where(StockDailyQuote.trade_date <= target_date)
+            .order_by(StockDailyQuote.trade_date.desc())
+            .limit(1)
+        ).first()
+
+        calendar_dates = self.fetch_trade_dates(
+            target_date - timedelta(days=90), target_date
+        )
+        calendar_latest = calendar_dates[-1] if calendar_dates else None
+
+        if calendar_latest is None:
+            return db_latest
+
+        if db_latest == calendar_latest:
+            return db_latest
+
+        try:
+            quotes = TushareStockService().fetch_daily_quotes(calendar_latest)
+            if quotes:
+                self._upsert_daily_quotes(quotes, session)
+                return calendar_latest
+        except Exception as e:
+            logger.warning("从 Tushare 拉取 %s 行情失败: %s", calendar_latest, e)
+
+        return db_latest
+
+    def _get_lookback_trade_dates(
+        self,
+        effective_date: date,
+        windows: List[int],
+    ) -> Dict[int, Optional[date]]:
+        """根据交易日历，计算 effective_date 前推 N 个交易日的日期。"""
+        dates = self.fetch_trade_dates(
+            effective_date - timedelta(days=90), effective_date
+        )
+        if effective_date not in dates:
+            return {w: None for w in windows}
+
+        idx = dates.index(effective_date)
+        return {w: dates[idx - w] if idx >= w else None for w in windows}
+
+    def _ensure_daily_quotes(
+        self,
+        dates,
+        session: Session,
+    ) -> None:
+        """确保指定日期在 StockDailyQuote 中有数据，缺失时从 Tushare 拉取。"""
+        from ..models import StockDailyQuote
+        from ..services.tushare_stock_service import TushareStockService
+
+        for d in dates:
+            exists = session.exec(
+                select(func.count(StockDailyQuote.id))
+                .where(StockDailyQuote.trade_date == d)
+            ).one()
+            if exists:
+                continue
+
+            try:
+                quotes = TushareStockService().fetch_daily_quotes(d)
+                if quotes:
+                    self._upsert_daily_quotes(quotes, session)
+            except Exception as e:
+                logger.warning("补齐 %s 行情失败: %s", d, e)
+
+    def _upsert_daily_quotes(
+        self,
+        quotes: List["StockDailyQuote"],
+        session: Session,
+    ) -> None:
+        """批量 upsert StockDailyQuote 记录。"""
+        from ..models import StockDailyQuote
+
+        fields = [
+            "close",
+            "change_pct",
+            "amount",
+            "turnover_rate",
+            "turnover_rate_f",
+            "float_mv",
+            "total_mv",
+            "pe",
+            "pe_ttm",
+            "pb",
+            "ps",
+            "ps_ttm",
+            "dv_ratio",
+            "dv_ttm",
+        ]
+        for q in quotes:
+            existing = session.exec(
+                select(StockDailyQuote)
+                .where(StockDailyQuote.stock_code == q.stock_code)
+                .where(StockDailyQuote.trade_date == q.trade_date)
+            ).first()
+            if existing:
+                for f in fields:
+                    setattr(existing, f, getattr(q, f))
+                existing.updated_at = datetime.utcnow()
+                session.add(existing)
+            else:
+                session.add(q)
+        session.commit()
+
+    def _build_gainer_ranking(
+        self,
+        end_date: date,
+        start_date: Optional[date],
+        quote_map: Dict,
+        stock_map: Dict[str, "Stock"],
+        session: Session,
+    ) -> List[dict]:
+        """构建单期涨幅榜前 10。"""
+        from ..models import Stock
+        from ..strategies.filters import apply_base_filters
+
+        if start_date is None:
+            return []
+
+        candidates = []
+        codes = []
+        for code, stock in stock_map.items():
+            q_now = quote_map.get((code, end_date))
+            q_then = quote_map.get((code, start_date))
+            if not q_now or not q_then:
+                continue
+            if q_now.close is None or q_then.close is None or q_then.close <= 0:
+                continue
+
+            gain = (q_now.close / q_then.close - 1) * 100
+            candidates.append({
+                "code": code,
+                "close": q_now.close,
+                "gain": gain,
+                "amount": q_now.amount or 0,
+                "turnover_rate": q_now.turnover_rate or 0,
+            })
+            codes.append(code)
+
+        if not candidates:
+            return []
+
+        filtered_codes = set(apply_base_filters(codes, end_date, session))
+
+        result = []
+        for c in sorted(candidates, key=lambda x: x["gain"], reverse=True):
+            if c["code"] not in filtered_codes:
+                continue
+            stock = stock_map[c["code"]]
+            result.append({
+                "rank": len(result) + 1,
+                "code": c["code"],
+                "name": stock.name,
+                "close": round(c["close"], 2),
+                "gain": round(c["gain"], 2),
+                "amount": c["amount"],
+                "turnover_rate": c["turnover_rate"],
+                "industry": stock.industry or "",
+            })
+            if len(result) >= 10:
+                break
+
+        return result
 
     def fetch_index_for_date(self, code: str, name: str, target_date: date) -> Optional[dict]:
         """获取单个指数在指定日期的行情（使用 Tushare index_daily）"""

@@ -1,11 +1,13 @@
 # 策略选股
 
-策略选股模块用于按不同选股逻辑筛选当日或历史交易日的潜力标的。当前版本仅实现选股功能，回测模块后续补充。
+策略选股模块用于按不同选股逻辑筛选当日或历史交易日的潜力标的。当前已实现选股与回测功能。
 
 ## 功能入口
 
-- 前端页面：`/strategies`
-- 后端 API：`/api/strategies`
+- 选股页面：`/strategies`
+- 回测页面：`/backtest`
+- 选股 API：`/api/strategies`
+- 回测 API：`/api/backtests`
 
 ## 接口说明
 
@@ -55,6 +57,7 @@ GET /api/strategies/{strategy_id}/picks?trade_date=YYYY-MM-DD&force_refresh=fals
 所有策略统一过滤以下标的：
 
 - ST 股票（名称含 ST 或 *ST）
+- 退市股票（名称含"退"）
 - 科创板（688 开头）
 - 创业板（300/301 开头）
 - 北交所（8/43/82/83/87/88/89/920 开头）
@@ -64,6 +67,45 @@ GET /api/strategies/{strategy_id}/picks?trade_date=YYYY-MM-DD&force_refresh=fals
 
 每个策略内部计算原始评分，然后通过 Min-Max 归一化到 0-100，便于不同策略之间横向对比。
 
+## 回测模块
+
+### 入口
+
+- 前端页面：`/backtest`
+- 运行回测：`POST /api/backtests/run`
+- 查询结果：`GET /api/backtests/{run_id}`
+- 历史记录：`GET /api/backtests`
+
+### 当前支持策略
+
+- `piglet`（首板不破·龙头跟踪）
+
+### 回测规则
+
+- 收盘后产生信号，下一交易日开盘买入
+- 持有固定交易日后开盘卖出
+- 目标仓位 = 当前总权益 / 最大持仓数
+- 买入数量向下取整到 100 股整数倍
+- 佣金双边收取
+
+### 可调参数
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `window_days` | 5 | 选股回看窗口天数 |
+| `hold_days` | 5 | 买入后持有天数 |
+| `max_positions` | 5 | 最大同时持仓数 |
+| `max_per_day` | 2 | 每个信号日最多新增仓位 |
+| `require_dragon` | false | 是否只交易有龙虎榜游资介入的股票 |
+| `initial_capital` | 100000 | 初始资金 |
+| `commission_rate` | 0.0003 | 佣金率（双边） |
+
+### 数据与范围限制
+
+- 当前回测实时从 Tushare 拉取数据，引擎内部带日期级缓存减少重复请求
+- 为避免长请求超时，回测改为后台异步执行：`POST /api/backtests/run` 立即返回 `run_id`，前端轮询结果
+- 实时 Tushare 模式限制最大回测区间为 **15 天**（日历日），超出会报错
+
 ## 缓存机制
 
 选股结果缓存 4 小时，命中缓存直接返回，避免重复调用 Tushare。可通过 `force_refresh=true` 强制刷新。
@@ -71,5 +113,5 @@ GET /api/strategies/{strategy_id}/picks?trade_date=YYYY-MM-DD&force_refresh=fals
 ## 后续规划
 
 - 增加更多选股策略
-- 接入回测模块
 - 支持策略组合与权重配置
+- 回测数据改为本地缓存后可放开 15 天区间限制

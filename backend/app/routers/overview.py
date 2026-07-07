@@ -172,8 +172,9 @@ def get_dragon_tiger(
     order: str = Query("desc", description="排序方向: asc / desc"),
     offset: int = Query(0, description="分页偏移，默认 0"),
     limit: int = Query(20, description="每页条数，默认 20"),
+    session: Session = Depends(get_session),
 ):
-    """龙虎榜数据，支持排序与分页"""
+    """龙虎榜数据，支持排序与分页。默认排除 ST、退市、科创、创业、北交及次新股。"""
     target_date = _parse_date(date)
     service = OverviewService()
     return service.fetch_dragon_tiger(
@@ -182,7 +183,19 @@ def get_dragon_tiger(
         order=order,
         offset=offset,
         limit=limit,
+        session=session,
     )
+
+
+@router.get("/top-gainers")
+def get_top_gainers(
+    date: Optional[str] = Query(None, description="日期 YYYY-MM-DD，默认今天"),
+    session: Session = Depends(get_session),
+):
+    """5日/10日涨幅榜（已应用基础过滤，数据未更新时自动回退）"""
+    target_date = _parse_date(date)
+    service = OverviewService()
+    return service.fetch_top_gainers(target_date, session)
 
 
 @router.get("/top-movers")

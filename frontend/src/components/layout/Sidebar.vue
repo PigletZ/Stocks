@@ -12,6 +12,11 @@
         <span>策略选股</span>
       </router-link>
 
+      <router-link to="/backtest" class="nav-item" :class="{ active: $route.name === 'backtest' }">
+        <span class="icon">📈</span>
+        <span>策略回测</span>
+      </router-link>
+
       <div class="nav-group">
         <div class="nav-group-title" @click="aSharesExpanded = !aSharesExpanded">
           <span>A 股</span>
@@ -23,6 +28,21 @@
           </router-link>
           <router-link to="/watchlist" class="nav-item" :class="{ active: $route.name === 'watchlist' }">
             自选股票
+          </router-link>
+        </div>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-group-title" @click="etfExpanded = !etfExpanded">
+          <span>ETF</span>
+          <span class="arrow" :class="{ expanded: etfExpanded }">▶</span>
+        </div>
+        <div v-show="etfExpanded" class="nav-sub">
+          <router-link to="/etfs" class="nav-item" :class="{ active: $route.name === 'etf-list' }">
+            全 ETF 列表
+          </router-link>
+          <router-link to="/etfs/gainers" class="nav-item" :class="{ active: $route.name === 'etf-gainers' }">
+            涨幅榜
           </router-link>
         </div>
       </div>
@@ -41,6 +61,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
 
 const aSharesExpanded = ref(true)
+const etfExpanded = ref(true)
 const router = useRouter()
 const auth = useAuthStore()
 

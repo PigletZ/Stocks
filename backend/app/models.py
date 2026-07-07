@@ -167,3 +167,35 @@ class StrategyPickCache(SQLModel, table=True):
     trade_date: date = Field(index=True)
     data_json: str = Field(default="[]")
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class BacktestRun(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    strategy_id: str = Field(index=True)
+    start_date: date
+    end_date: date
+    initial_capital: float
+    params_json: str = Field(default="{}")
+    status: str = Field(default="pending")  # pending / running / completed / failed
+    metrics_json: Optional[str] = None
+    equity_curve_json: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_at: Optional[datetime] = None
+
+
+class BacktestTrade(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    backtest_run_id: int = Field(index=True, foreign_key="backtestrun.id")
+    stock_code: str = Field(index=True)
+    direction: str  # buy / sell
+    quantity: int
+    price: float
+    amount: float  # 成交金额 = price * quantity
+    commission: float
+    trade_date: date
+    signal_date: Optional[date] = None
+    hold_days: Optional[int] = None
+    pnl: Optional[float] = None  # 仅卖出时填写
+    raw_json: Optional[str] = None  # 保留 first_limit_date / base_close / has_dragon 等
+    created_at: datetime = Field(default_factory=datetime.utcnow)

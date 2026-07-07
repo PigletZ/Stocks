@@ -4,6 +4,9 @@ import StockListView from '../views/StockListView.vue'
 import WatchlistView from '../views/WatchlistView.vue'
 import StockDetailView from '../views/StockDetailView.vue'
 import StrategyView from '../views/StrategyView.vue'
+import BacktestView from '../views/BacktestView.vue'
+import EtfListView from '../views/EtfListView.vue'
+import EtfGainersView from '../views/EtfGainersView.vue'
 import LoginView from '../views/LoginView.vue'
 import { useAuthStore } from '../stores/auth'
 
@@ -45,6 +48,24 @@ const router = createRouter({
       name: 'strategies',
       component: StrategyView,
       meta: { title: '策略选股' },
+    },
+    {
+      path: '/backtest',
+      name: 'backtest',
+      component: BacktestView,
+      meta: { title: '策略回测' },
+    },
+    {
+      path: '/etfs',
+      name: 'etf-list',
+      component: EtfListView,
+      meta: { title: '全 ETF 列表', parent: 'etf' },
+    },
+    {
+      path: '/etfs/gainers',
+      name: 'etf-gainers',
+      component: EtfGainersView,
+      meta: { title: 'ETF 涨幅榜', parent: 'etf' },
     },
   ],
 })

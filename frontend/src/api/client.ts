@@ -374,6 +374,91 @@ export async function fetchDragonTiger(
   return data
 }
 
+export interface TopGainerItem {
+  rank: number
+  code: string
+  name: string
+  close: number
+  gain: number
+  amount: number
+  turnover_rate: number
+  industry: string
+}
+
+export interface TopGainersResponse {
+  target_date: string
+  effective_date: string
+  five_day: TopGainerItem[]
+  ten_day: TopGainerItem[]
+  twenty_day: TopGainerItem[]
+}
+
+export async function fetchTopGainers(date?: string): Promise<TopGainersResponse> {
+  const { data } = await api.get('/overview/top-gainers', {
+    params: date ? { date } : undefined,
+  })
+  return data
+}
+
+export interface EtfItem {
+  code: string
+  name: string
+  management: string
+  fund_type: string
+  benchmark: string
+  category: string
+  close: number
+  change_pct: number
+  amount: number
+}
+
+export interface EtfListResponse {
+  total: number
+  items: EtfItem[]
+  effective_date: string
+}
+
+export async function fetchEtfList(
+  sortBy: string = 'change_pct',
+  order: 'asc' | 'desc' = 'desc',
+  offset = 0,
+  limit = 50,
+  category = '',
+): Promise<EtfListResponse> {
+  const { data } = await api.get('/etfs/list', {
+    params: { sort_by: sortBy, order, offset, limit, category },
+  })
+  return data
+}
+
+export async function fetchEtfCategories(): Promise<string[]> {
+  const { data } = await api.get('/etfs/categories')
+  return data
+}
+
+export interface EtfGainerItem {
+  rank: number
+  code: string
+  name: string
+  close: number
+  gain: number
+}
+
+export interface EtfGainersResponse {
+  target_date: string
+  effective_date: string
+  five_day: EtfGainerItem[]
+  ten_day: EtfGainerItem[]
+  twenty_day: EtfGainerItem[]
+}
+
+export async function fetchEtfGainers(date?: string, category = ''): Promise<EtfGainersResponse> {
+  const { data } = await api.get('/etfs/gainers', {
+    params: { date, category },
+  })
+  return data
+}
+
 export async function fetchSectorRanking(
   type: 'industry' | 'concept' = 'industry',
   limit = 20,
@@ -536,6 +621,112 @@ export async function fetchStrategyPicks(
 ): Promise<StrategyPicksResponse> {
   const { data } = await api.get(`/strategies/${strategyId}/picks`, {
     params: { trade_date: tradeDate, force_refresh: forceRefresh },
+  })
+  return data
+}
+
+// ==================== 策略回测 ====================
+
+export interface BacktestRequest {
+  strategy_id: string
+  start_date: string
+  end_date: string
+  window_days: number
+  hold_days: number
+  max_positions: number
+  max_per_day: number
+  require_dragon: boolean
+  initial_capital: number
+  commission_rate: number
+}
+
+export interface BacktestMetrics {
+  initial_capital: number
+  final_value: number
+  total_return: number
+  total_return_pct: number
+  cagr: number
+  cagr_pct: number
+  max_drawdown: number
+  max_drawdown_pct: number
+  sharpe_ratio: number
+  num_buy_trades: number
+  num_sell_trades: number
+  win_rate: number
+  win_rate_pct: number
+  profit_factor: number
+  avg_trade_pnl: number
+  avg_win: number
+  avg_loss: number
+  avg_hold_days: number
+}
+
+export interface BacktestTradeItem {
+  id: number
+  stock_code: string
+  stock_name?: string
+  direction: 'buy' | 'sell'
+  quantity: number
+  price: number
+  amount: number
+  commission: number
+  trade_date: string
+  signal_date?: string
+  hold_days?: number
+  pnl?: number
+  raw?: Record<string, any>
+}
+
+export interface EquityPoint {
+  date: string
+  cash: number
+  market_value: number
+  total_value: number
+}
+
+export interface BacktestResult {
+  id: number
+  strategy_id: string
+  start_date: string
+  end_date: string
+  initial_capital: number
+  params: string
+  status: string
+  error_message?: string
+  metrics: BacktestMetrics
+  equity_curve: EquityPoint[]
+  trades: BacktestTradeItem[]
+  created_at: string
+  completed_at?: string
+}
+
+export interface BacktestRunInfo {
+  id: number
+  strategy_id: string
+  start_date: string
+  end_date: string
+  initial_capital: number
+  params: string
+  status: string
+  error_message?: string
+  metrics?: BacktestMetrics
+  created_at: string
+  completed_at?: string
+}
+
+export async function runBacktest(req: BacktestRequest): Promise<{ run_id: number; status: string }> {
+  const { data } = await api.post('/backtests/run', req)
+  return data
+}
+
+export async function fetchBacktest(runId: number): Promise<BacktestResult> {
+  const { data } = await api.get(`/backtests/${runId}`)
+  return data
+}
+
+export async function fetchBacktests(strategyId?: string, limit = 20): Promise<BacktestRunInfo[]> {
+  const { data } = await api.get('/backtests', {
+    params: { strategy_id: strategyId, limit },
   })
   return data
 }

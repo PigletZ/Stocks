@@ -13,6 +13,13 @@ def is_st_stock(name: Optional[str]) -> bool:
     return "ST" in name.upper()
 
 
+def is_delisted_stock(name: Optional[str]) -> bool:
+    """判断是否为退市股票（名称含"退"）。"""
+    if not name:
+        return False
+    return "退" in name
+
+
 def is_kcb(code: str) -> bool:
     """科创板：688。"""
     return code.startswith("688")
@@ -74,6 +81,8 @@ def apply_base_filters(
         if not stock:
             continue
         if exclude_st and is_st_stock(stock.name):
+            continue
+        if is_delisted_stock(stock.name):
             continue
         if exclude_kcb and is_kcb(code):
             continue
