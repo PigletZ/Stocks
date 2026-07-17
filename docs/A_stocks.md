@@ -23,7 +23,10 @@
 ### 数据来源
 - 股票基础信息：Tushare `stock_basic`
 - 行情数据：Tushare `daily` + `daily_basic`
-- 同步时机：手动触发（收盘后），无实时轮询
+- 同步时机：
+  - 系统定时任务在每个交易日收盘后自动同步（见 crontab `import_daily.py` / `sync_strategy_data.py`）
+  - 页面保留手动同步入口
+- 全市场模糊搜索经优化为毫秒级响应
 
 ### 技术实现
 - 后端：
@@ -62,11 +65,17 @@
 ### 功能
 - K 线图（日线 only，Tushare `daily`）
 - 股票基本信息展示（名称、代码、行业、上市日期、交易所、最新价、涨跌幅、成交额、换手率、总市值、PE、PB）
+- 复盘回放面板
+    - 初始化回放会话（设定初始资金）
+    - 回放控制（逐根 K 线推进）
+    - 模拟买入 / 卖出，查看持仓与交易记录
 - 无分钟级 K 线（无 Tushare 权限）
 
 ### 技术实现
-- 后端：`GET /api/bars/{code}?interval=1d` 使用 Tushare `daily` 接口
-- 前端：`StockDetailView.vue` 使用 `ChartPanel` 组件（TradingView Lightweight Charts）展示日线
+- 后端：
+  - `GET /api/bars/{code}?interval=1d` 使用 Tushare `daily` 接口
+  - 回放会话与模拟交易：`POST /api/trades/session/{session_id}/init`、`GET/POST /api/trades/session/{session_id}`、`GET /api/trades/session/{session_id}/position`
+- 前端：`StockDetailView.vue` 使用 `ChartPanel` 组件（TradingView Lightweight Charts）展示日线，侧边栏为回放面板（`stores/replay`）
 
 ## 数据源
 

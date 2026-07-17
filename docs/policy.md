@@ -49,8 +49,7 @@ GET /api/strategies/{strategy_id}/picks?trade_date=YYYY-MM-DD&force_refresh=fals
 | 策略 ID | 名称 | 说明 | 文档 |
 |---|---|---|---|
 | `dragon-tiger` | 龙虎榜游资追踪 | 基于龙虎榜净买入数据，聚焦主板小市值 | [dragon-tiger.md](policy/dragon-tiger.md) |
-| `volume-breakout` | 放量突破 | 成交量为 20 日均量 2 倍以上且创 20 日新高 | [volume-breakout.md](policy/volume-breakout.md) |
-| `momentum-leader` | 强势领涨 | 近 5 日涨幅位于市场前 10% 且当日继续放量上涨 | [momentum-leader.md](policy/momentum-leader.md) |
+| `piglet` | 首板不破·龙头跟踪 | 捕捉首次涨停后持续不跌破首板的强势龙头，标注游资介入 | [piglet.md](policy/piglet.md) |
 
 ## 公共过滤条件
 
@@ -108,7 +107,7 @@ GET /api/strategies/{strategy_id}/picks?trade_date=YYYY-MM-DD&force_refresh=fals
 
 ## 缓存机制
 
-选股结果缓存 4 小时，命中缓存直接返回，避免重复调用 Tushare。可通过 `force_refresh=true` 强制刷新。
+策略结果缓存已禁用：每次请求都实时计算。`force_refresh` 参数保留在接口签名中，当前无实际作用。历史计算结果会持久化到本地数据库，可按交易日回看。
 
 ## 后续规划
 

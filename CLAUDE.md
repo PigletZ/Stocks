@@ -14,10 +14,12 @@
 - 开源：暂不开放源代码，作为个人工具使用
 
 ## 页面导航栏结构
-- 概览：主要包含实时概览，日概览，涨跌停，龙虎榜等，详情可参看：docs/overview.md
+- 概览：主要包含日概览、涨停、跌停、龙虎榜、涨幅榜等，详情可参看：docs/overview.md
 - A股：主要包含所有股票信息以及自选股信息，详情可参看：docs/A_stocks.md
 - 策略选股：详情可参看：docs/policy.md
-- 系统配置：详情可参看：doc/system.md
+- 策略回测：详情可参看：docs/policy.md 回测模块一节
+- ETF：全 ETF 列表与 ETF 涨幅榜，详情可参看：docs/etf.md
+- Tushare 接口权限归档：docs/tushare_permissions.md
 
 ## 目录结构
 - backend：Python FastAPI 后端
@@ -27,7 +29,7 @@
 - README.md： git readme 文档
 
 ## Build && Run && Test
-- git地址：待定
+- git地址：git@github.com:PigletZ/Stocks.git
 
 -  backend
     - 执行命令
