@@ -156,7 +156,7 @@ def _extract_category(name: str, benchmark: str) -> str:
 
 
 class EtfService:
-    """ETF 数据服务（基于高权限 Tushare token）"""
+    """ETF 数据服务"""
 
     def __init__(self):
         self._tushare_pro = None
@@ -164,12 +164,12 @@ class EtfService:
         self._etf_list_cache_time: Optional[datetime] = None
 
     def _get_tushare_pro(self):
-        """使用高权限 Tushare token 初始化 Pro 接口"""
+        """使用 Tushare token 初始化 Pro 接口"""
         if not hasattr(self, "_tushare_pro") or self._tushare_pro is None:
-            token = settings.high_privilege_tushare_token
+            token = settings.tushare_token
             if not token:
                 raise RuntimeError(
-                    "高权限 Tushare token 未配置，请检查 /etc/kimi/stocks/base.conf 中的 [high_privilege_tushare]"
+                    "Tushare token 未配置，请检查 /etc/kimi/stocks/base.conf 中的 [tushare]"
                 )
             self._tushare_pro = ts.pro_api(token)
         return self._tushare_pro
