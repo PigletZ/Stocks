@@ -1022,33 +1022,59 @@ class OverviewService:
         data = self._fetch_sector_daily_from_tushare(target_date)
         rows = data.get(sector_type, [])
         if session is not None and rows:
-            for item in rows:
-                existing = session.exec(
-                    select(SectorDaily).where(
-                        SectorDaily.sector_type == sector_type,
-                        SectorDaily.sector_code == item["sector_code"],
-                        SectorDaily.trade_date == target_date,
-                    )
-                ).first()
-                if existing:
-                    existing.sector_name = item["sector_name"]
-                    existing.change_pct = item["change_pct"]
-                    existing.volume = item["volume"]
-                    existing.updated_at = datetime.utcnow()
-                    session.add(existing)
-                else:
-                    session.add(SectorDaily(
-                        sector_type=sector_type,
-                        sector_code=item["sector_code"],
-                        sector_name=item["sector_name"],
-                        trade_date=target_date,
-                        change_pct=item["change_pct"],
-                        volume=item["volume"],
-                    ))
-            session.commit()
+            try:
+                self._upsert_sector_daily(session, sector_type, target_date, rows)
+            except Exception:
+                # 缓存写入失败（如并发写库）不影响本次数据返回
+                session.rollback()
+                logger.exception(
+                    "板块日线缓存写入失败: %s %s", sector_type, target_date
+                )
 
         rows.sort(key=lambda x: x[sort_by], reverse=True)
         return rows[:limit]
+
+    @staticmethod
+    def _upsert_sector_daily(session, sector_type: str, target_date: date, rows: List[dict]) -> int:
+        """原子 upsert 板块日线，返回写入条数。
+
+        概览页会对同一交易日并发发起多个 sectors-daily 请求，缓存为空时多个
+        线程同时走"拉取 → 写入"；逐行 SELECT+add 会在 autoflush 时撞
+        (sector_type, sector_code, trade_date) 唯一约束（历史 500 报错），
+        改用 SQLite 原生 ON CONFLICT DO UPDATE 后写入是原子的，并发安全。
+        """
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        from ..models import SectorDaily
+
+        # 防御：Tushare 若返回重复 sector_code，只保留最后一条
+        deduped = {item["sector_code"]: item for item in rows}
+        now = datetime.utcnow()
+        values = [
+            {
+                "sector_type": sector_type,
+                "sector_code": item["sector_code"],
+                "sector_name": item["sector_name"],
+                "trade_date": target_date,
+                "change_pct": item["change_pct"],
+                "volume": item["volume"],
+                "updated_at": now,
+            }
+            for item in deduped.values()
+        ]
+        stmt = sqlite_insert(SectorDaily).values(values)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["sector_type", "sector_code", "trade_date"],
+            set_={
+                "sector_name": stmt.excluded.sector_name,
+                "change_pct": stmt.excluded.change_pct,
+                "volume": stmt.excluded.volume,
+                "updated_at": stmt.excluded.updated_at,
+            },
+        )
+        session.execute(stmt)
+        session.commit()
+        return len(values)
 
     def sync_sector_ranking_for_date(
         self,
@@ -1062,7 +1088,7 @@ class OverviewService:
         if session is None:
             return 0
 
-        # 删除旧缓存
+        # 删除旧缓存与重新写入放在同一事务，避免与并发请求交错产生竞态
         old_rows = session.exec(
             select(SectorDaily).where(
                 SectorDaily.sector_type == sector_type,
@@ -1071,21 +1097,14 @@ class OverviewService:
         ).all()
         for row in old_rows:
             session.delete(row)
-        session.commit()
 
         data = self._fetch_sector_daily_from_tushare(target_date)
         rows = data.get(sector_type, [])
-        for item in rows:
-            session.add(SectorDaily(
-                sector_type=sector_type,
-                sector_code=item["sector_code"],
-                sector_name=item["sector_name"],
-                trade_date=target_date,
-                change_pct=item["change_pct"],
-                volume=item["volume"],
-            ))
-        session.commit()
-        return len(rows)
+        if not rows:
+            session.commit()
+            return 0
+        # _upsert_sector_daily 内部会 commit；删除在同一会话中随之一起提交
+        return self._upsert_sector_daily(session, sector_type, target_date, rows)
 
     def fetch_speed_ranking(self, interval: str = "5min", direction: str = "up", limit: int = 20) -> List[dict]:
         """获取涨速榜（5分钟/15分钟最快拉升/下跌）。
