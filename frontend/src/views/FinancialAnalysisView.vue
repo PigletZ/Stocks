@@ -2,35 +2,47 @@
   <div class="financial-view">
     <div class="header">
       <h1>财务分析</h1>
-      <span class="sub">三大报表 · 今年与去年 · 最多 10 只对比（不支持银行股）</span>
+      <nav class="tab-nav">
+        <button
+          v-for="t in tabs"
+          :key="t.key"
+          class="tab-btn"
+          :class="{ active: activeTab === t.key }"
+          @click="activeTab = t.key"
+        >{{ t.label }}</button>
+      </nav>
     </div>
 
-    <StockPicker v-model="picked" />
+    <template v-if="activeTab === 'analysis'">
+      <StockPicker v-model="picked" />
 
-    <div v-if="error" class="error-banner">{{ error }}</div>
-    <div v-if="loading" class="hint">分析中（首次分析需回源拉取财报，稍候）…</div>
-    <div v-else-if="!picked.length" class="hint">请选择要分析的股票</div>
+      <div v-if="error" class="error-banner">{{ error }}</div>
+      <div v-if="loading" class="hint">分析中（首次分析需回源拉取财报，稍候）…</div>
+      <div v-else-if="!picked.length" class="hint">请选择要分析的股票</div>
 
-    <template v-if="result && !loading">
-      <!-- ① 财务体检卡 -->
-      <section class="cards-row">
-        <HealthCard v-for="s in result.stocks" :key="s.code" :stock="s" />
-      </section>
+      <template v-if="result && !loading">
+        <!-- ① 财务体检卡 -->
+        <section class="cards-row">
+          <HealthCard v-for="s in result.stocks" :key="s.code" :stock="s" />
+        </section>
 
-      <!-- ② 多股对比 -->
-      <section class="compare-grid">
-        <CompareTable :stocks="result.stocks" />
-        <RadarChart v-if="result.stocks.length >= 2" :radar="result.radar" />
-      </section>
-      <section v-if="result.stocks.length >= 2" class="bar-row">
-        <MetricBarChart :stocks="result.stocks" />
-      </section>
+        <!-- ② 多股对比 -->
+        <section class="compare-grid">
+          <CompareTable :stocks="result.stocks" />
+          <RadarChart v-if="result.stocks.length >= 2" :radar="result.radar" />
+        </section>
+        <section v-if="result.stocks.length >= 2" class="bar-row">
+          <MetricBarChart :stocks="result.stocks" />
+        </section>
 
-      <!-- ③ 报表原文查看器 -->
-      <section class="statement-row">
-        <StatementTable :stocks="result.stocks" />
-      </section>
+        <!-- ③ 报表原文查看器 -->
+        <section class="statement-row">
+          <StatementTable :stocks="result.stocks" />
+        </section>
+      </template>
     </template>
+
+    <HighlightRankTab v-if="activeTab === 'rank'" @compare="onCompare" />
   </div>
 </template>
 
@@ -43,10 +55,17 @@ import CompareTable from '../components/financial/CompareTable.vue'
 import RadarChart from '../components/financial/RadarChart.vue'
 import MetricBarChart from '../components/financial/MetricBarChart.vue'
 import StatementTable from '../components/financial/StatementTable.vue'
+import HighlightRankTab from '../components/financial/HighlightRankTab.vue'
 import { fetchFinancialCompare, type FinCompareResult } from '../api/client'
 
 const route = useRoute()
 const router = useRouter()
+
+const tabs: { key: 'analysis' | 'rank'; label: string }[] = [
+  { key: 'analysis', label: '个股分析' },
+  { key: 'rank', label: '亮点榜' },
+]
+const activeTab = ref<'analysis' | 'rank'>('analysis')
 
 const picked = ref<{ code: string; name: string }[]>([])
 const result = ref<FinCompareResult | null>(null)
@@ -95,6 +114,14 @@ watch(picked, () => {
   analyze()
 }, { deep: true })
 
+// 亮点榜「加入对比」：加入选股并切回个股分析
+function onCompare(stock: { code: string; name: string }) {
+  if (!picked.value.some((s) => s.code === stock.code) && picked.value.length < 10) {
+    picked.value = [...picked.value, stock]
+  }
+  activeTab.value = 'analysis'
+}
+
 onMounted(async () => {
   const q = route.query.codes
   const codes = (typeof q === 'string' ? q : '').split(',').filter(Boolean).slice(0, 10)
@@ -117,8 +144,8 @@ onMounted(async () => {
 
 .header {
   display: flex;
-  align-items: baseline;
-  gap: 12px;
+  align-items: center;
+  gap: 16px;
 }
 
 .header h1 {
@@ -127,9 +154,30 @@ onMounted(async () => {
   margin: 0;
 }
 
-.header .sub {
-  color: #6b7280;
+.tab-nav {
+  display: flex;
+  gap: 4px;
+}
+
+.tab-btn {
+  background: #1f2937;
+  border: 1px solid #374151;
+  border-radius: 4px;
+  color: #d1d5db;
   font-size: 13px;
+  padding: 5px 14px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.tab-btn:hover {
+  color: #fff;
+}
+
+.tab-btn.active {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
 }
 
 .hint {

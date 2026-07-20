@@ -93,6 +93,7 @@ journalctl -u stocks -f      # 查看日志（同时输出到 backend/logs/serve
 - 16:00 日概览/每日行情入库（`scripts/import_daily.py`）
 - 16:20 策略行情快照（`scripts/sync_strategy_data.py --quote-days 5 --skip-bars`）
 - 16:40 K 线数据（`scripts/sync_strategy_data.py --quote-days 1 --bar-days 10`）
+- 19:00 财报增量校验 + 亮点 Top100 算榜（`scripts/sync_fin_daily.py`，每天）
 
 页面同时保留手动同步入口。
 

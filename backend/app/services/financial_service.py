@@ -542,3 +542,93 @@ class FinancialService:
                 "yoy": yoy,
             })
         return {"periods": [p.isoformat() for p in display], "items": items}
+
+    # ---------- 亮点 Top100 榜 ----------
+
+    # 最新报告期距今超过该天数视为数据陈旧，不入榜
+    STALE_DAYS = 120
+
+    @staticmethod
+    def get_highlight_pool(session: Session) -> List[str]:
+        """亮点榜股票池：策略统一过滤条件（ST/退市/科创/创业/北交/次新）+ 银行股。"""
+        from ..strategies.filters import apply_base_filters
+
+        all_codes = [s.code for s in session.exec(select(Stock)).all()]
+        codes = set(apply_base_filters(all_codes, date.today(), session))
+        if not codes:
+            return []
+        rows = session.exec(select(Stock).where(Stock.code.in_(codes))).all()
+        return sorted(
+            s.code for s in rows if not (s.industry and "银行" in s.industry)
+        )
+
+    def compute_highlight_rank(
+        self, session: Session, stat_date: Optional[date] = None, top_n: int = 300
+    ) -> int:
+        """对股票池批量计算亮点榜并落库（当日整体覆盖），返回入榜数量。
+
+        排序口径（docs/financial-analysis.md §10.5）：
+        亮点数降序 → 风险数升序 → ROE(年化)降序 → 营收同比降序。
+        落库前 top_n 名（默认 300），前端可选展示前 100/200/300。
+        """
+        from ..models import FinHighlight
+
+        stat_date = stat_date or date.today()
+        pool = self.get_highlight_pool(session)
+        scored = []
+        for code in pool:
+            income = self._load_rows(session, FinIncome, code)
+            if not income:
+                continue  # 财报尚未入库
+            balance = self._load_rows(session, FinBalance, code)
+            cashflow = self._load_rows(session, FinCashflow, code)
+            all_periods = sorted(set(income) | set(balance) | set(cashflow))
+            display_periods = [p for p in all_periods if p >= DISPLAY_START]
+            if not display_periods:
+                continue
+            if (stat_date - display_periods[-1]).days > self.STALE_DAYS:
+                continue  # 数据陈旧（长期停牌/异常）
+            metrics = self._build_metrics(income, balance, cashflow, display_periods)
+            latest = metrics.get(display_periods[-1].isoformat())
+            if not latest:
+                continue
+            tags = self._build_tags(metrics, display_periods)
+            scored.append({
+                "code": code,
+                "tags": tags,
+                "good_count": sum(1 for t in tags if t["type"] == "good"),
+                "risk_count": sum(1 for t in tags if t["type"] == "risk"),
+                "roe": latest.get("roe_annualized"),
+                "rev_yoy": latest.get("revenue_yoy"),
+                "metrics": latest,
+            })
+
+        def _key(item):
+            # None 排最后
+            roe = item["roe"] if item["roe"] is not None else -1e9
+            rev = item["rev_yoy"] if item["rev_yoy"] is not None else -1e9
+            return (-item["good_count"], item["risk_count"], -roe, -rev)
+
+        scored.sort(key=_key)
+        top = scored[:top_n]
+
+        # 当日旧榜整体删除后重写（算榜是全量重算，非增量）。
+        # 必须用 Core DELETE 立即执行：ORM 的 session.delete() 在 flush 时
+        # 可能排在 insert 之后，导致撞 (stat_date, code) 唯一约束
+        from sqlalchemy import delete as sql_delete
+
+        session.exec(
+            sql_delete(FinHighlight).where(FinHighlight.stat_date == stat_date)
+        )
+        for i, item in enumerate(top, 1):
+            session.add(FinHighlight(
+                stat_date=stat_date,
+                code=item["code"],
+                rank=i,
+                good_count=item["good_count"],
+                risk_count=item["risk_count"],
+                tags_json=json.dumps(item["tags"], ensure_ascii=False),
+                metrics_json=json.dumps(item["metrics"], ensure_ascii=False),
+            ))
+        session.commit()
+        return len(top)

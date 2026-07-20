@@ -801,3 +801,29 @@ export async function fetchFinancialStatements(
   const { data } = await api.get('/financial/statements', { params: { code, type } })
   return data
 }
+
+export interface FinHighlightItem {
+  rank: number
+  code: string
+  name: string
+  industry?: string | null
+  good_count: number
+  risk_count: number
+  tags: FinTag[]
+  metrics: FinMetrics
+}
+
+export interface FinHighlightRank {
+  date: string | null
+  items: FinHighlightItem[]
+}
+
+export async function fetchFinancialHighlightRank(
+  limit = 100,
+  date?: string
+): Promise<FinHighlightRank> {
+  const { data } = await api.get('/financial/highlight-rank', {
+    params: { limit, ...(date ? { date } : {}) },
+  })
+  return data
+}

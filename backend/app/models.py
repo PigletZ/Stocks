@@ -257,3 +257,19 @@ class FinCashflow(SQLModel, table=True):
     free_cashflow: Optional[float] = None  # 自由现金流
     data_json: Optional[str] = None
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class FinHighlight(SQLModel, table=True):
+    """每日亮点 Top100 榜单（stat_date 当天重算整体覆盖）"""
+
+    __table_args__ = (UniqueConstraint("stat_date", "code", name="uix_fin_highlight_date_code"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    stat_date: date = Field(index=True)
+    code: str = Field(index=True, foreign_key="stock.code")
+    rank: int
+    good_count: int = 0
+    risk_count: int = 0
+    tags_json: Optional[str] = None  # [{type, label}]
+    metrics_json: Optional[str] = None  # 最新期核心指标快照
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
