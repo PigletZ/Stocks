@@ -8,6 +8,7 @@
 - **A 股**：全市场股票列表（搜索/筛选/排序）、自选股分组管理、股票详情（K 线 + 复盘回放模拟交易）
 - **策略选股**：龙虎榜游资追踪、首板不破·龙头跟踪（piglet）
 - **策略回测**：piglet 策略全栈回测（收盘信号 → 次日开盘买 → 固定天数后开盘卖）
+- **财务分析**：1~10 只股票三大报表对比（体检卡/指标对比/五维雷达/全科目报表，不支持银行股）
 - **ETF**：全 ETF 列表（品类筛选/排序）、ETF 涨幅榜
 
 详细功能文档见 [docs/](docs/)：
@@ -17,6 +18,7 @@
 | [docs/overview.md](docs/overview.md) | 概览页 |
 | [docs/A_stocks.md](docs/A_stocks.md) | A 股（列表/自选/详情/回放） |
 | [docs/policy.md](docs/policy.md) | 策略选股与回测（策略明细见 docs/policy/） |
+| [docs/financial-analysis.md](docs/financial-analysis.md) | 财务分析模块 |
 | [docs/etf.md](docs/etf.md) | ETF 模块 |
 | [docs/tushare_permissions.md](docs/tushare_permissions.md) | Tushare 接口权限归档 |
 | [docs/frontend-style-guide.md](docs/frontend-style-guide.md) | 前端样式规范 |

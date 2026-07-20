@@ -199,3 +199,61 @@ class BacktestTrade(SQLModel, table=True):
     pnl: Optional[float] = None  # 仅卖出时填写
     raw_json: Optional[str] = None  # 保留 first_limit_date / base_close / has_dragon 等
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class FinIncome(SQLModel, table=True):
+    """利润表（按报告期），常用字段建列 + data_json 存全科目原文"""
+
+    __table_args__ = (UniqueConstraint("stock_code", "end_date", name="uix_fin_income_code_date"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    stock_code: str = Field(index=True, foreign_key="stock.code")
+    end_date: date = Field(index=True)  # 报告期
+    f_ann_date: Optional[date] = None  # 实际公告日（用于判断更新）
+    total_revenue: Optional[float] = None  # 营业总收入
+    revenue: Optional[float] = None  # 营业收入
+    operate_cost: Optional[float] = None  # 营业成本
+    n_income_attr_p: Optional[float] = None  # 归母净利润
+    basic_eps: Optional[float] = None  # 基本每股收益
+    data_json: Optional[str] = None  # 全科目原文 JSON
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class FinBalance(SQLModel, table=True):
+    """资产负债表（按报告期）"""
+
+    __table_args__ = (UniqueConstraint("stock_code", "end_date", name="uix_fin_balance_code_date"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    stock_code: str = Field(index=True, foreign_key="stock.code")
+    end_date: date = Field(index=True)
+    f_ann_date: Optional[date] = None
+    total_assets: Optional[float] = None  # 资产总计
+    total_liab: Optional[float] = None  # 负债合计
+    total_hldr_eqy_inc_min_int: Optional[float] = None  # 股东权益合计（含少数股东）
+    total_hldr_eqy_exc_min_int: Optional[float] = None  # 归母股东权益
+    total_cur_assets: Optional[float] = None  # 流动资产合计
+    total_cur_liab: Optional[float] = None  # 流动负债合计
+    money_cap: Optional[float] = None  # 货币资金
+    inventories: Optional[float] = None  # 存货
+    accounts_receiv: Optional[float] = None  # 应收账款
+    goodwill: Optional[float] = None  # 商誉
+    data_json: Optional[str] = None
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class FinCashflow(SQLModel, table=True):
+    """现金流量表（按报告期）"""
+
+    __table_args__ = (UniqueConstraint("stock_code", "end_date", name="uix_fin_cashflow_code_date"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    stock_code: str = Field(index=True, foreign_key="stock.code")
+    end_date: date = Field(index=True)
+    f_ann_date: Optional[date] = None
+    n_cashflow_act: Optional[float] = None  # 经营活动现金流净额
+    n_cashflow_inv_act: Optional[float] = None  # 投资活动现金流净额
+    n_cash_flows_fnc_act: Optional[float] = None  # 筹资活动现金流净额
+    free_cashflow: Optional[float] = None  # 自由现金流
+    data_json: Optional[str] = None
+    updated_at: datetime = Field(default_factory=datetime.utcnow)

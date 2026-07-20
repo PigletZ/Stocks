@@ -18,6 +18,7 @@
 - A股：主要包含所有股票信息以及自选股信息，详情可参看：docs/A_stocks.md
 - 策略选股：详情可参看：docs/policy.md
 - 策略回测：详情可参看：docs/policy.md 回测模块一节
+- 财务分析：1~10 只股票三大报表对比分析（不支持银行股），详情可参看：docs/financial-analysis.md
 - ETF：全 ETF 列表与 ETF 涨幅榜，详情可参看：docs/etf.md
 - Tushare 接口权限归档：docs/tushare_permissions.md
 

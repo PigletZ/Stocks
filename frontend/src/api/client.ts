@@ -730,3 +730,74 @@ export async function fetchBacktests(strategyId?: string, limit = 20): Promise<B
   })
   return data
 }
+
+// ==================== 财务分析 ====================
+
+export interface FinMetrics {
+  revenue?: number | null
+  revenue_yoy?: number | null
+  net_profit?: number | null
+  net_profit_yoy?: number | null
+  gross_margin?: number | null
+  net_margin?: number | null
+  roe?: number | null
+  roe_annualized?: number | null
+  debt_ratio?: number | null
+  current_ratio?: number | null
+  ncf?: number | null
+  ncf_ratio?: number | null
+  inv_turnover?: number | null
+  ar_turnover?: number | null
+  asset_turnover?: number | null
+  goodwill_ratio?: number | null
+}
+
+export interface FinTag {
+  type: 'good' | 'risk'
+  label: string
+}
+
+export interface FinStockCompare {
+  code: string
+  name: string
+  industry?: string | null
+  periods: string[]
+  metrics: Record<string, FinMetrics>
+  card: FinMetrics & { period?: string | null }
+  tags: FinTag[]
+}
+
+export interface FinRadarSeries {
+  name: string
+  values: number[]
+}
+
+export interface FinCompareResult {
+  stocks: FinStockCompare[]
+  radar: { dims: string[]; series: FinRadarSeries[] }
+}
+
+export interface FinStatementItem {
+  field: string
+  name: string
+  values: (number | null)[]
+  yoy: (number | null)[]
+}
+
+export interface FinStatementResult {
+  periods: string[]
+  items: FinStatementItem[]
+}
+
+export async function fetchFinancialCompare(codes: string[]): Promise<FinCompareResult> {
+  const { data } = await api.post('/financial/compare', { codes })
+  return data
+}
+
+export async function fetchFinancialStatements(
+  code: string,
+  type: 'income' | 'balance' | 'cashflow'
+): Promise<FinStatementResult> {
+  const { data } = await api.get('/financial/statements', { params: { code, type } })
+  return data
+}

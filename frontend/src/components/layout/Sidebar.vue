@@ -17,6 +17,11 @@
         <span>策略回测</span>
       </router-link>
 
+      <router-link to="/financial" class="nav-item" :class="{ active: $route.name === 'financial' }">
+        <span class="icon">💰</span>
+        <span>财务分析</span>
+      </router-link>
+
       <div class="nav-group">
         <div class="nav-group-title" @click="aSharesExpanded = !aSharesExpanded">
           <span>A 股</span>

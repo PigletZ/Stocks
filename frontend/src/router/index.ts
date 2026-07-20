@@ -7,6 +7,7 @@ import StrategyView from '../views/StrategyView.vue'
 import BacktestView from '../views/BacktestView.vue'
 import EtfListView from '../views/EtfListView.vue'
 import EtfGainersView from '../views/EtfGainersView.vue'
+import FinancialAnalysisView from '../views/FinancialAnalysisView.vue'
 import LoginView from '../views/LoginView.vue'
 import { useAuthStore } from '../stores/auth'
 
@@ -54,6 +55,12 @@ const router = createRouter({
       name: 'backtest',
       component: BacktestView,
       meta: { title: '策略回测' },
+    },
+    {
+      path: '/financial',
+      name: 'financial',
+      component: FinancialAnalysisView,
+      meta: { title: '财务分析' },
     },
     {
       path: '/etfs',
