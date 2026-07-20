@@ -1,5 +1,5 @@
 from datetime import date, datetime, timedelta
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 import logging
 
 from sqlalchemy import func
@@ -140,31 +140,33 @@ class OverviewService:
         若当天数据尚未更新，自动回退到最近一个有数据的交易日。
         """
         target_date = date.today()
-        stats = self.fetch_market_stats_for_date(target_date)
+        stats, _ = self.fetch_market_stats_for_date(target_date)
         if stats.get("total", 0) > 0:
             return stats
 
         prev_date = self._get_previous_trade_date(target_date)
         if prev_date:
-            return self.fetch_market_stats_for_date(prev_date)
+            return self.fetch_market_stats_for_date(prev_date)[0]
         return stats
 
-    def fetch_limit_stats_for_date(self, target_date: date) -> dict:
-        """获取指定日期的涨停、跌停、炸板数量（使用 Tushare limit_list_d）"""
+    def fetch_limit_stats_for_date(self, target_date: date) -> Optional[dict]:
+        """获取指定日期的涨停、跌停、炸板数量（使用 Tushare limit_list_d）。
+
+        limit_list_d 在收盘后较晚才发布：返回空表或调用失败时表示"数据未就绪"，
+        返回 None 由调用方决定是否缓存（避免把 0 当作真实值永久缓存）。
+        """
         date_str = target_date.strftime("%Y%m%d")
         try:
             df = self._get_tushare_pro().limit_list_d(trade_date=date_str)
+            if df is None or df.empty:
+                return None
             return {
                 "limit_up": int((df["limit"] == "U").sum()),
                 "limit_down": int((df["limit"] == "D").sum()),
                 "opened_limit": int((df["limit"] == "Z").sum()),
             }
         except Exception:
-            return {
-                "limit_up": 0,
-                "limit_down": 0,
-                "opened_limit": 0,
-            }
+            return None
 
     def fetch_trade_dates(self, start: date, end: date) -> List[date]:
         """获取指定日期范围内的 A 股交易日（使用 Tushare 交易日历），结果按升序返回"""
@@ -217,13 +219,14 @@ class OverviewService:
                     "total_turnover": cached.total_turnover,
                 })
             else:
-                market_stats = self.fetch_market_stats_for_date(current)
-                stat = MarketDailyStat(
-                    stat_date=current,
-                    **market_stats,
-                )
-                session.add(stat)
-                session.commit()
+                market_stats, authoritative = self.fetch_market_stats_for_date(current)
+                if authoritative:
+                    stat = MarketDailyStat(
+                        stat_date=current,
+                        **market_stats,
+                    )
+                    session.add(stat)
+                    session.commit()
 
                 result.append({
                     "date": current.isoformat(),
@@ -727,11 +730,14 @@ class OverviewService:
             pass
         return None
 
-    def fetch_market_stats_for_date(self, target_date: date) -> dict:
-        """获取指定日期的市场统计（涨跌家数、成交额、涨跌停，全部来自 Tushare）
+    def fetch_market_stats_for_date(self, target_date: date) -> Tuple[dict, bool]:
+        """获取指定日期的市场统计（涨跌家数、成交额、涨跌停，全部来自 Tushare）。
 
-        使用 Tushare daily 计算涨跌家数与总成交额；limit_list_d 计算涨跌停/炸板。
-        若当日 daily 无数据（未收盘或节假日），则全部返回 0，避免显示 stale 数据。
+        返回 (stats, authoritative)。authoritative=False 表示数据未就绪
+        （未收盘/假日/涨跌停榜单未发布），调用方不应缓存该结果：
+        - daily 为空（未收盘、未来交易日或节假日）→ 全 0，不缓存
+        - daily 有数据但 limit_list_d 未发布 → 涨跌停计 0 返回，但不缓存，
+          下次请求重算，待发布后自然得到真实值
         """
         date_str = target_date.strftime("%Y%m%d")
         empty_result = {
@@ -747,13 +753,24 @@ class OverviewService:
         try:
             df = self._get_tushare_pro().daily(trade_date=date_str)
             if df.empty:
-                return empty_result
+                return empty_result, False
             up = int((df["pct_chg"] > 0).sum())
             down = int((df["pct_chg"] < 0).sum())
             flat = int((df["pct_chg"] == 0).sum())
             # amount 单位为千元，转成元
             total_turnover = float(df["amount"].sum()) * 1000
             limit_stats = self.fetch_limit_stats_for_date(target_date)
+            if limit_stats is None:
+                return {
+                    "up": up,
+                    "down": down,
+                    "flat": flat,
+                    "total": up + down + flat,
+                    "total_turnover": total_turnover,
+                    "limit_up": 0,
+                    "limit_down": 0,
+                    "opened_limit": 0,
+                }, False
             return {
                 "up": up,
                 "down": down,
@@ -761,9 +778,9 @@ class OverviewService:
                 "total": up + down + flat,
                 "total_turnover": total_turnover,
                 **limit_stats,
-            }
+            }, True
         except Exception:
-            return empty_result
+            return empty_result, False
 
     def fetch_daily_overview(self, target_date: date, session) -> dict:
         """获取指定日期的日概览数据（指数 + 市场统计）"""
@@ -840,12 +857,14 @@ class OverviewService:
                 "total_turnover": cached_stat.total_turnover,
             }
         else:
-            market_stats = self.fetch_market_stats_for_date(target_date)
-            session.add(MarketDailyStat(
-                stat_date=target_date,
-                **market_stats,
-            ))
-            session.commit()
+            market_stats, authoritative = self.fetch_market_stats_for_date(target_date)
+            if authoritative:
+                # 数据未就绪（未收盘/涨跌停未发布）时不缓存，避免把 0 当真实值永久落库
+                session.add(MarketDailyStat(
+                    stat_date=target_date,
+                    **market_stats,
+                ))
+                session.commit()
 
         return {
             "date": target_date.isoformat(),
