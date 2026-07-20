@@ -268,11 +268,11 @@ td {
 }
 
 td.best {
-  color: #4ade80;
+  color: #f87171;
   font-weight: 700;
 }
 
 td.worst {
-  color: #f87171;
+  color: #4ade80;
 }
 </style>

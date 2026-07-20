@@ -141,15 +141,15 @@ function cls(v?: number | null): string {
 }
 
 .hc-tag.good {
-  background: rgba(34, 197, 94, 0.12);
-  color: #4ade80;
-  border: 1px solid rgba(34, 197, 94, 0.35);
-}
-
-.hc-tag.risk {
   background: rgba(239, 68, 68, 0.12);
   color: #f87171;
   border: 1px solid rgba(239, 68, 68, 0.35);
+}
+
+.hc-tag.risk {
+  background: rgba(34, 197, 94, 0.12);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.35);
 }
 
 .hc-tag-none {
