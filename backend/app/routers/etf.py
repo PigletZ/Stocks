@@ -43,8 +43,9 @@ def get_etf_categories():
 def get_etf_gainers(
     date: Optional[str] = Query(None, description="日期 YYYY-MM-DD，默认今天"),
     category: str = Query("", description="品类筛选，默认全部"),
+    min_amount: float = Query(1000.0, description="2日榜最低成交额（万元），用于过滤迷你基/妖基"),
 ):
-    """ETF 5日/10日/20日涨幅榜前 10。支持品类筛选，数据未更新时自动回退到最近交易日。"""
+    """ETF 2日/5日/10日/20日涨幅榜前 10。支持品类筛选，数据未更新时自动回退到最近交易日。"""
     target_date = _parse_date(date)
     service = EtfService()
-    return service.fetch_etf_gainers(target_date, category=category)
+    return service.fetch_etf_gainers(target_date, category=category, min_amount=min_amount)

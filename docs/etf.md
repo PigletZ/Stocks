@@ -19,7 +19,9 @@ ETF 模块包含两个页面：**全 ETF 列表** 与 **ETF 涨幅榜**，在侧
 ## ETF 涨幅榜（`/etfs/gainers`）
 
 ### 功能
-- 按交易日展示 ETF 涨幅排行
+- 按交易日展示 ETF 涨幅排行，包含 2 日 / 5 日 / 10 日 / 20 日四个窗口
+  - 2 日榜定位"异动预警"，响应快但噪音大，默认过滤当日成交额 < 1000 万的 ETF（可用 `min_amount` 参数调整）
+  - 5/10/20 日榜定位"趋势确认"，不过滤成交额
 - 支持日期选择回看；所选日期无数据时自动回落到最近一个有数据的交易日
 - 支持按品类筛选
 
@@ -34,7 +36,7 @@ ETF 模块包含两个页面：**全 ETF 列表** 与 **ETF 涨幅榜**，在侧
 
 - `GET /api/etfs/list?sort_by=&order=&offset=&limit=&category=`：ETF 列表（含最新行情）
 - `GET /api/etfs/categories`：品类列表
-- `GET /api/etfs/gainers?date=&category=`：涨幅榜
+- `GET /api/etfs/gainers?date=&category=&min_amount=`：涨幅榜（`min_amount` 为 2 日榜最低成交额，单位万元，默认 1000）
 
 ## 技术实现
 

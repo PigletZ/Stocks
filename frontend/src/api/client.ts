@@ -447,6 +447,7 @@ export interface EtfGainerItem {
 export interface EtfGainersResponse {
   target_date: string
   effective_date: string
+  two_day: EtfGainerItem[]
   five_day: EtfGainerItem[]
   ten_day: EtfGainerItem[]
   twenty_day: EtfGainerItem[]

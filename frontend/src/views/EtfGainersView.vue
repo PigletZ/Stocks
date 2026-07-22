@@ -17,7 +17,10 @@
 
     <div class="rankings-grid">
       <section v-for="section in sections" :key="section.key" class="ranking-panel">
-        <h3>{{ section.title }}</h3>
+        <h3>
+          {{ section.title }}
+          <span v-if="section.note" class="panel-note">{{ section.note }}</span>
+        </h3>
         <div class="table-container">
           <table class="stock-table">
             <thead>
@@ -63,9 +66,10 @@ const response = ref<EtfGainersResponse | null>(null)
 const loading = ref(false)
 
 const sections = computed(() => [
-  { key: '5', title: '五日涨幅榜', items: response.value?.five_day || [] },
-  { key: '10', title: '十日涨幅榜', items: response.value?.ten_day || [] },
-  { key: '20', title: '二十日涨幅榜', items: response.value?.twenty_day || [] },
+  { key: '2', title: '两日涨幅榜', note: '已过滤成交额 < 1000 万', items: response.value?.two_day || [] },
+  { key: '5', title: '五日涨幅榜', note: '', items: response.value?.five_day || [] },
+  { key: '10', title: '十日涨幅榜', note: '', items: response.value?.ten_day || [] },
+  { key: '20', title: '二十日涨幅榜', note: '', items: response.value?.twenty_day || [] },
 ])
 
 async function loadData() {
@@ -165,6 +169,13 @@ onMounted(() => {
   font-weight: 600;
   color: #e5e7eb;
   margin: 0 0 12px 0;
+}
+
+.panel-note {
+  font-size: 12px;
+  font-weight: 400;
+  color: #6b7280;
+  margin-left: 8px;
 }
 
 .table-container {

@@ -378,10 +378,12 @@ class EtfService:
         self,
         target_date: Optional[date] = None,
         category: str = "",
+        min_amount: float = 1000.0,
     ) -> dict:
-        """获取 ETF 的 5日/10日/20日涨幅榜前 10，支持按品类筛选。
+        """获取 ETF 的 2日/5日/10日/20日涨幅榜前 10，支持按品类筛选。
 
         默认自动回退到最近有数据的交易日。
+        min_amount 单位为万元，仅对 2 日榜生效（短窗口噪音大，过滤迷你基/妖基）。
         """
         d = target_date or date.today()
         effective_date = self._resolve_effective_date(d)
@@ -389,19 +391,21 @@ class EtfService:
             return {
                 "target_date": d.isoformat(),
                 "effective_date": None,
+                "two_day": [],
                 "five_day": [],
                 "ten_day": [],
                 "twenty_day": [],
             }
 
-        lookbacks = self._get_lookback_trade_dates(effective_date, [5, 10, 20])
+        lookbacks = self._get_lookback_trade_dates(effective_date, [2, 5, 10, 20])
+        two_base = lookbacks.get(2)
         five_base = lookbacks.get(5)
         ten_base = lookbacks.get(10)
         twenty_base = lookbacks.get(20)
 
         # 拉取所需日期的日线
         daily_map: Dict[date, pd.DataFrame] = {}
-        for td in {effective_date, five_base, ten_base, twenty_base}:
+        for td in {effective_date, two_base, five_base, ten_base, twenty_base}:
             if td is None:
                 continue
             daily_map[td] = self._fetch_etf_daily_for_date(td)
@@ -412,6 +416,7 @@ class EtfService:
             return {
                 "target_date": d.isoformat(),
                 "effective_date": effective_date.isoformat(),
+                "two_day": [],
                 "five_day": [],
                 "ten_day": [],
                 "twenty_day": [],
@@ -428,13 +433,23 @@ class EtfService:
         code_name_map = dict(zip(df_basic["code"], df_basic["name"]))
         allowed_codes = set(df_basic["code"].astype(str).tolist())
 
-        def _build_ranking(end_date: date, start_date: Optional[date]) -> List[dict]:
+        def _build_ranking(
+            end_date: date,
+            start_date: Optional[date],
+            min_amount_wan: float = 0.0,
+        ) -> List[dict]:
             if start_date is None:
                 return []
             df_end = daily_map.get(end_date)
             df_start = daily_map.get(start_date)
             if df_end is None or df_start is None or df_end.empty or df_start.empty:
                 return []
+
+            # fund_daily 的 amount 单位为千元
+            df_end = df_end.copy()
+            df_end["amount"] = pd.to_numeric(df_end["amount"], errors="coerce").fillna(0)
+            if min_amount_wan > 0:
+                df_end = df_end[df_end["amount"] >= min_amount_wan * 10]
 
             end_quotes = df_end.set_index("code")[["close"]].rename(columns={"close": "close_end"})
             start_quotes = df_start.set_index("code")[["close"]].rename(columns={"close": "close_start"})
@@ -462,6 +477,7 @@ class EtfService:
         return {
             "target_date": d.isoformat(),
             "effective_date": effective_date.isoformat(),
+            "two_day": _build_ranking(effective_date, two_base, min_amount_wan=min_amount),
             "five_day": _build_ranking(effective_date, five_base),
             "ten_day": _build_ranking(effective_date, ten_base),
             "twenty_day": _build_ranking(effective_date, twenty_base),
