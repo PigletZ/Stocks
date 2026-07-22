@@ -26,6 +26,15 @@
         :items="result?.items || []"
         :strategy-id="result?.strategy_id || ''"
         @add-watchlist="addToWatchlist"
+        @show-detail="openDetail"
+      />
+
+      <PigletStockDetailPopup
+        :visible="detailPopup.visible"
+        :code="detailPopup.code"
+        :name="detailPopup.name"
+        :industry="detailPopup.industry"
+        @close="detailPopup.visible = false"
       />
     </div>
   </div>
@@ -35,14 +44,30 @@
 import { ref, onMounted } from 'vue'
 import StrategyPicker from '../components/strategy/StrategyPicker.vue'
 import StrategyResultTable from '../components/strategy/StrategyResultTable.vue'
+import PigletStockDetailPopup from '../components/strategy/PigletStockDetailPopup.vue'
 import { fetchStrategies, fetchStrategyPicks, addToWatchlist as addToWatchlistApi } from '../api/client'
-import type { StrategyInfo, StrategyPicksResponse } from '../api/client'
+import type { StrategyInfo, StrategyPicksResponse, StrategyPickItem } from '../api/client'
 
 const strategies = ref<StrategyInfo[]>([])
 const selectedStrategyId = ref('')
 const tradeDate = ref('')
 const result = ref<StrategyPicksResponse | null>(null)
 const loading = ref(false)
+const detailPopup = ref({
+  visible: false,
+  code: '',
+  name: '',
+  industry: '',
+})
+
+function openDetail(item: StrategyPickItem) {
+  detailPopup.value = {
+    visible: true,
+    code: item.code,
+    name: item.name,
+    industry: item.extra?.industry || '',
+  }
+}
 
 async function loadStrategies() {
   try {

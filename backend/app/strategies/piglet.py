@@ -100,10 +100,11 @@ class PigletStrategy(StrategyBase):
             trade_dates, {s["code"] for s in survivors}
         )
 
-        # 股票名称
+        # 股票名称与所属行业
         codes = [s["code"] for s in survivors]
         stocks = session.exec(select(Stock).where(Stock.code.in_(codes))).all()
         name_map = {s.code: s.name for s in stocks}
+        industry_map = {s.code: s.industry for s in stocks}
 
         picks: List[StockPick] = []
         for s in survivors:
@@ -147,6 +148,7 @@ class PigletStrategy(StrategyBase):
                         "net_amount": net_amount,
                         "latest_close": latest_close,
                         "since_first_pct": since_first_pct,
+                        "industry": industry_map.get(code),
                     },
                 )
             )

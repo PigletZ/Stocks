@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select, or_, func
 from typing import List, Optional
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from ..database import get_session
-from ..models import Stock, StockDailyQuote
+from ..models import Stock, StockDailyQuote, Bar
 from ..services.tushare_stock_service import TushareStockService
 
 router = APIRouter()
@@ -281,3 +281,133 @@ def _stock_with_quote(
         )
 
     return data
+
+
+@router.get("/{code}/daily-history")
+def get_stock_daily_history(
+    code: str,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    session: Session = Depends(get_session),
+):
+    """返回个股日线综合数据（K 线 + 行情指标），近 3 个月可省略 start/end。"""
+    stock = session.exec(select(Stock).where(Stock.code == code)).first()
+    if not stock:
+        raise HTTPException(status_code=404, detail="股票不存在")
+
+    end_date = _parse_date(end) or date.today()
+    start_date = _parse_date(start) or date.fromordinal(end_date.toordinal() - 90)
+
+    service = TushareStockService()
+
+    def _range_covered(records, date_attr) -> bool:
+        """判断本地记录是否已覆盖 [start_date, end_date]（允许周末/节假日 3 天容差）。"""
+        if not records:
+            return False
+        dates = [getattr(r, date_attr).date() if hasattr(getattr(r, date_attr), "date") else getattr(r, date_attr) for r in records]
+        min_d, max_d = min(dates), max(dates)
+        buffer = timedelta(days=3)
+        return (min_d <= start_date + buffer) and (max_d >= end_date - buffer)
+
+    def _save_quotes(quotes):
+        for quote in quotes:
+            existing = session.exec(
+                select(StockDailyQuote)
+                .where(StockDailyQuote.stock_code == quote.stock_code)
+                .where(StockDailyQuote.trade_date == quote.trade_date)
+            ).first()
+            if existing:
+                for field in [
+                    "close",
+                    "change_pct",
+                    "amount",
+                    "turnover_rate",
+                    "turnover_rate_f",
+                    "float_mv",
+                    "total_mv",
+                    "pe",
+                    "pe_ttm",
+                    "pb",
+                    "ps",
+                    "ps_ttm",
+                    "dv_ratio",
+                    "dv_ttm",
+                ]:
+                    setattr(existing, field, getattr(quote, field))
+                existing.updated_at = datetime.utcnow()
+                session.add(existing)
+            else:
+                session.add(quote)
+        session.commit()
+
+    # 1. 拉取/补齐 Bar（OHLCV）
+    bar_query = (
+        select(Bar)
+        .where(Bar.stock_code == code, Bar.interval == "1d")
+        .where(Bar.timestamp >= start_date)
+        .where(Bar.timestamp <= end_date)
+        .order_by(Bar.timestamp)
+    )
+    bars = session.exec(bar_query).all()
+    if not _range_covered(bars, "timestamp"):
+        fetched_bars = service.fetch_daily_bars(code, start=start_date, end=end_date)
+        # 删除同范围旧数据，写入新数据
+        old_bars = session.exec(
+            select(Bar)
+            .where(Bar.stock_code == code, Bar.interval == "1d")
+            .where(Bar.timestamp >= start_date)
+            .where(Bar.timestamp <= end_date)
+        ).all()
+        for old in old_bars:
+            session.delete(old)
+        session.flush()
+        for bar in fetched_bars:
+            session.add(bar)
+        session.commit()
+        bars = session.exec(bar_query).all()
+
+    # 2. 拉取/补齐 StockDailyQuote（amount/turnover/估值）
+    quote_query = (
+        select(StockDailyQuote)
+        .where(StockDailyQuote.stock_code == code)
+        .where(StockDailyQuote.trade_date >= start_date)
+        .where(StockDailyQuote.trade_date <= end_date)
+        .order_by(StockDailyQuote.trade_date)
+    )
+    quotes = session.exec(quote_query).all()
+    if not _range_covered(quotes, "trade_date"):
+        fetched_quotes = service.fetch_daily_quotes_for_stock(code, start=start_date, end=end_date)
+        _save_quotes(fetched_quotes)
+        quotes = session.exec(quote_query).all()
+
+    quote_map = {q.trade_date.isoformat(): q for q in quotes}
+
+    result = []
+    for bar in bars:
+        trade_date = bar.timestamp.date().isoformat()
+        q = quote_map.get(trade_date)
+        result.append(
+            {
+                "trade_date": trade_date,
+                "timestamp": bar.timestamp.isoformat(),
+                "open": bar.open,
+                "high": bar.high,
+                "low": bar.low,
+                "close": bar.close,
+                "volume": bar.volume,
+                "amount": q.amount if q else None,
+                "change_pct": q.change_pct if q else None,
+                "turnover_rate": q.turnover_rate if q else None,
+                "turnover_rate_f": q.turnover_rate_f if q else None,
+                "float_mv": q.float_mv if q else None,
+                "total_mv": q.total_mv if q else None,
+                "pe": q.pe if q else None,
+                "pe_ttm": q.pe_ttm if q else None,
+                "pb": q.pb if q else None,
+                "ps": q.ps if q else None,
+                "ps_ttm": q.ps_ttm if q else None,
+                "dv_ratio": q.dv_ratio if q else None,
+                "dv_ttm": q.dv_ttm if q else None,
+            }
+        )
+    return result

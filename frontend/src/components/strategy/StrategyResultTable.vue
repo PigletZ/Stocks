@@ -8,6 +8,7 @@
         <tr>
           <th>排名</th>
           <th>股票</th>
+          <th>所属行业</th>
           <th>首板日期</th>
           <th>不破天数</th>
           <th>首板至今涨幅</th>
@@ -24,6 +25,7 @@
             <div class="stock-name">{{ item.name }}</div>
             <div class="stock-code">{{ item.code }}</div>
           </td>
+          <td class="industry">{{ item.extra?.industry || '-' }}</td>
           <td>{{ formatDate(item.extra?.first_limit_date) }}</td>
           <td>{{ item.extra?.hold_days ?? '-' }}</td>
           <td :class="pctClass(item.extra?.since_first_pct)">{{ formatPct(item.extra?.since_first_pct) }}</td>
@@ -35,7 +37,7 @@
           <td>{{ item.buy_price.toFixed(2) }}</td>
           <td>
             <button class="btn-link" @click="$emit('addWatchlist', item.code)">加自选</button>
-            <router-link :to="`/stock/${item.code}`" class="btn-link">详情</router-link>
+            <button class="btn-link" @click="$emit('showDetail', item)">详情</button>
           </td>
         </tr>
       </tbody>
@@ -86,6 +88,7 @@ const props = defineProps<{
 
 defineEmits<{
   (e: 'addWatchlist', code: string): void
+  (e: 'showDetail', item: StrategyPickItem): void
 }>()
 
 const isPiglet = computed(() => props.strategyId === 'piglet')
@@ -194,6 +197,11 @@ td.up {
 td.down {
   color: #22c55e;
   font-weight: 600;
+}
+
+.industry {
+  color: #d1d5db;
+  max-width: 120px;
 }
 
 .tag-dragon {

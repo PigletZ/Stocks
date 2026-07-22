@@ -23,11 +23,14 @@ class TushareStockService:
     @staticmethod
     def _code_to_ts_code(code: str) -> Optional[str]:
         """将纯数字代码转换为 Tushare ts_code"""
-        if code.startswith("6") or code.startswith("000") or code.startswith("899"):
+        # 沪市：60/68/69/90 开头
+        if code.startswith(("6", "90")):
             return f"{code}.SH"
-        if code.startswith("399") or code.startswith("3") or code.startswith("0") or code.startswith("2"):
+        # 深市：00/00/20/30 开头
+        if code.startswith(("0", "2", "3")):
             return f"{code}.SZ"
-        if code.startswith("8") or code.startswith("4"):
+        # 北交所：4/8/920 开头
+        if code.startswith(("4", "8", "920")):
             return f"{code}.BJ"
         return None
 
@@ -165,11 +168,11 @@ class TushareStockService:
 
     @staticmethod
     def _infer_exchange(code: str) -> str:
-        if code.startswith(("6", "68", "88", "89")):
+        if code.startswith(("6", "68", "88", "89", "90")):
             return "SH"
         if code.startswith(("0", "3", "2")):
             return "SZ"
-        if code.startswith(("4", "8", "43", "83", "87")):
+        if code.startswith(("4", "8", "43", "83", "87", "920")):
             return "BJ"
         return "SZ"
 
@@ -268,3 +271,71 @@ class TushareStockService:
                 )
             )
         return bars
+
+    def fetch_daily_quotes_for_stock(
+        self,
+        code: str,
+        start: Optional[date] = None,
+        end: Optional[date] = None,
+    ) -> List[StockDailyQuote]:
+        """获取指定股票区间内的 daily + daily_basic 行情（包含成交额与换手率等）。"""
+        pro = self._get_tushare_pro()
+        ts_code = self._code_to_ts_code(code)
+        if not ts_code:
+            return []
+
+        start_str = start.strftime("%Y%m%d") if start else "19700101"
+        end_str = end.strftime("%Y%m%d") if end else date.today().strftime("%Y%m%d")
+
+        df_daily = self._fetch_all_pages(
+            pro,
+            "daily",
+            ts_code=ts_code,
+            start_date=start_str,
+            end_date=end_str,
+        )
+        df_basic = self._fetch_all_pages(
+            pro,
+            "daily_basic",
+            ts_code=ts_code,
+            start_date=start_str,
+            end_date=end_str,
+        )
+
+        if df_daily.empty and df_basic.empty:
+            return []
+
+        if df_daily.empty:
+            df = df_basic.copy()
+        elif df_basic.empty:
+            df = df_daily.copy()
+        else:
+            df = df_daily.merge(df_basic, on="ts_code", how="outer", suffixes=("", "_basic"))
+
+        quotes = []
+        for _, row in df.iterrows():
+            trade_date = self._safe_parse_date(row.get("trade_date"))
+            if not trade_date:
+                continue
+            quotes.append(
+                StockDailyQuote(
+                    stock_code=code,
+                    trade_date=trade_date,
+                    close=self._to_float(row.get("close")),
+                    change_pct=self._to_float(row.get("pct_chg")),
+                    amount=self._to_float(row.get("amount"), 1000),
+                    turnover_rate=self._to_float(row.get("turnover_rate")),
+                    turnover_rate_f=self._to_float(row.get("turnover_rate_f")),
+                    float_mv=self._to_float(row.get("circ_mv"), 10000),
+                    total_mv=self._to_float(row.get("total_mv"), 10000),
+                    pe=self._to_float(row.get("pe")),
+                    pe_ttm=self._to_float(row.get("pe_ttm")),
+                    pb=self._to_float(row.get("pb")),
+                    ps=self._to_float(row.get("ps")),
+                    ps_ttm=self._to_float(row.get("ps_ttm")),
+                    dv_ratio=self._to_float(row.get("dv_ratio")),
+                    dv_ttm=self._to_float(row.get("dv_ttm")),
+                    updated_at=datetime.utcnow(),
+                )
+            )
+        return quotes

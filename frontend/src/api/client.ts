@@ -586,6 +586,40 @@ export async function fetchBars(code: string, interval: string, start?: string, 
   return data
 }
 
+export interface StockDailyHistoryItem {
+  trade_date: string
+  timestamp: string
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+  amount?: number
+  change_pct?: number
+  turnover_rate?: number
+  turnover_rate_f?: number
+  float_mv?: number
+  total_mv?: number
+  pe?: number
+  pe_ttm?: number
+  pb?: number
+  ps?: number
+  ps_ttm?: number
+  dv_ratio?: number
+  dv_ttm?: number
+}
+
+export async function fetchStockDailyHistory(
+  code: string,
+  start?: string,
+  end?: string,
+): Promise<StockDailyHistoryItem[]> {
+  const { data } = await api.get(`/stocks/${code}/daily-history`, {
+    params: { start, end },
+  })
+  return data
+}
+
 // ==================== 策略选股 ====================
 
 export interface StrategyInfo {
