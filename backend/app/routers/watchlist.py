@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlmodel import Session, select
 from typing import List, Optional
-from datetime import date
+from datetime import date, datetime
 
 from ..database import get_session
-from ..models import WatchlistGroup, WatchlistItem, Stock, StockDailyQuote
+from ..models import Holding, WatchlistGroup, WatchlistItem, Stock, StockDailyQuote
+from ..services.journal_service import JournalService
 
 router = APIRouter()
 
@@ -57,12 +59,37 @@ def _quote_to_dict(quote: Optional[StockDailyQuote]) -> dict:
 
 @router.get("/groups")
 def list_watchlist_groups(session: Session = Depends(get_session)) -> List[dict]:
-    """按分组返回自选股列表（含最新行情）"""
+    """按分组返回自选股列表（含最新行情与持仓盈亏）
+
+    持仓来源：交易台账 FIFO 计算优先；无台账记录时用手动录入的 holding。
+    """
     latest_date = _get_latest_trade_date(session)
+    pos_map = JournalService().get_position_map(session)
+    manual_holdings = {h.stock_code: h for h in session.exec(select(Holding)).all()}
 
     groups = session.exec(
         select(WatchlistGroup).order_by(WatchlistGroup.sort_order, WatchlistGroup.created_at)
     ).all()
+
+    def _position_dict(code: str, close: Optional[float]) -> Optional[dict]:
+        if code in pos_map:
+            p = pos_map[code]
+            source = "journal"
+        elif code in manual_holdings:
+            h = manual_holdings[code]
+            p = {"quantity": h.quantity, "cost_price": h.cost_price, "realized_pnl": None}
+            source = "manual"
+        else:
+            return None
+        cost = p["cost_price"]
+        return {
+            "quantity": p["quantity"],
+            "cost_price": cost,
+            "source": source,
+            "unrealized_pnl": round((close - cost) * p["quantity"], 2) if close is not None else None,
+            "unrealized_pct": round((close / cost - 1) * 100, 2) if close is not None and cost > 0 else None,
+            "realized_pnl": p.get("realized_pnl"),
+        }
 
     result = []
     for group in groups:
@@ -100,6 +127,7 @@ def list_watchlist_groups(session: Session = Depends(get_session)) -> List[dict]
                     "exchange": stock.exchange,
                     "industry": stock.industry,
                     "sort_order": item.sort_order,
+                    "position": _position_dict(stock.code, quote.close if quote else None),
                     **_quote_to_dict(quote),
                 }
             )
@@ -113,6 +141,50 @@ def list_watchlist_groups(session: Session = Depends(get_session)) -> List[dict]
             }
         )
     return result
+
+
+class HoldingIn(BaseModel):
+    cost_price: float
+    quantity: int
+    note: Optional[str] = None
+
+
+@router.put("/holdings/{code}")
+def upsert_holding(code: str, body: HoldingIn, session: Session = Depends(get_session)):
+    """手动录入/更新持仓成本（无台账记录的股票用）"""
+    if body.cost_price <= 0 or body.quantity <= 0:
+        raise HTTPException(status_code=400, detail="成本价和数量必须大于 0")
+    stock = session.exec(select(Stock).where(Stock.code == code)).first()
+    if not stock:
+        raise HTTPException(status_code=404, detail="股票不存在")
+
+    holding = session.exec(select(Holding).where(Holding.stock_code == code)).first()
+    if holding:
+        holding.cost_price = body.cost_price
+        holding.quantity = body.quantity
+        holding.note = body.note
+        holding.updated_at = datetime.utcnow()
+    else:
+        holding = Holding(
+            stock_code=code,
+            cost_price=body.cost_price,
+            quantity=body.quantity,
+            note=body.note,
+        )
+    session.add(holding)
+    session.commit()
+    return {"code": code, "cost_price": holding.cost_price, "quantity": holding.quantity}
+
+
+@router.delete("/holdings/{code}")
+def delete_holding(code: str, session: Session = Depends(get_session)):
+    """删除手动持仓"""
+    holding = session.exec(select(Holding).where(Holding.stock_code == code)).first()
+    if not holding:
+        raise HTTPException(status_code=404, detail="手动持仓不存在")
+    session.delete(holding)
+    session.commit()
+    return {"message": "已删除"}
 
 
 @router.post("/groups")

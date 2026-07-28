@@ -42,23 +42,30 @@
 ## 自选股票
 
 ### 功能
-- 支持分组管理（创建、重命名、删除分组）
-- 支持添加/移除股票到自选
+- 支持分组管理（创建、重命名、删除分组、分组折叠）
+- 支持添加/移除股票到自选（页内搜索添加）
 - 支持移动股票到不同分组
 - 展示自选股票最新行情（同全市场股票字段）
+- 持仓盈亏：卡片显示持仓数量、成本、浮动盈亏；所有交互为弹窗（无原生 prompt/confirm）
+
+### 持仓来源（优先级）
+1. **交易台账**（`source: journal`）：复盘日志模块的买卖记录按 FIFO 自动计算，自选页只读展示，调整需改台账
+2. **手动录入**（`source: manual`）：无台账记录的股票可在自选页直接录入成本价/数量（`holding` 表）
 
 ### 技术实现
 - 后端：
-  - 新增 `WatchlistGroup` 表
+  - 新增 `WatchlistGroup` 表、`Holding` 表（手动持仓，stock_code 唯一）
   - `WatchlistItem` 改用 `group_id` 外键关联分组
-  - `GET /api/watchlist/groups` 返回分组及组内股票（含行情）
+  - `GET /api/watchlist/groups` 返回分组及组内股票（含行情 + `position` 持仓盈亏）
   - `POST /api/watchlist/groups` 创建分组
   - `PUT /api/watchlist/groups/{id}` 重命名分组
   - `DELETE /api/watchlist/groups/{id}` 删除分组
+  - `PUT /api/watchlist/holdings/{code}` 录入/更新手动持仓
+  - `DELETE /api/watchlist/holdings/{code}` 删除手动持仓
   - `POST /api/watchlist/{code}` 加自选
   - `PUT /api/watchlist/{code}/group` 移动分组
   - `DELETE /api/watchlist/{code}` 移除自选
-- 前端：`WatchlistView.vue` 分组卡片布局，支持分组 CRUD
+- 前端：`WatchlistView.vue` 分组卡片布局；通用弹窗组件 `components/common/BaseModal.vue`（新建/重命名/删除确认/移动/持仓/添加自选复用）
 
 ## 股票详情
 
