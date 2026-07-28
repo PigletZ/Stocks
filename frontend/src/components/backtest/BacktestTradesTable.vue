@@ -24,6 +24,8 @@
           v-for="t in sortedTrades"
           :key="t.id"
           :class="t.direction"
+          class="trade-row"
+          @click="$emit('showDetail', t)"
         >
           <td>
             <span class="tag" :class="t.direction">{{ t.direction === 'buy' ? '买入' : '卖出' }}</span>
@@ -56,6 +58,10 @@ import type { BacktestTradeItem } from '../../api/client'
 
 const props = defineProps<{
   trades: BacktestTradeItem[]
+}>()
+
+defineEmits<{
+  (e: 'showDetail', trade: BacktestTradeItem): void
 }>()
 
 const showPnl = computed(() => props.trades.some((t) => t.direction === 'sell'))
@@ -102,6 +108,14 @@ function pnlClass(pnl?: number | null) {
   border: 1px solid #1f2937;
   border-radius: 8px;
   overflow-x: auto;
+}
+
+.trade-row {
+  cursor: pointer;
+}
+
+.trade-row:hover {
+  background: #1f2937;
 }
 
 .empty {

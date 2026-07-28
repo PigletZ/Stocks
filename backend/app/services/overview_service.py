@@ -969,11 +969,14 @@ class OverviewService:
                 meta = info.get(code)
                 if not meta:
                     continue
+                # 注意：NaN 是 truthy，不能用 `or 0` 兜底，否则写入时撞 NOT NULL 约束
+                pct = row.get("pct_change")
+                vol = row.get("vol")
                 result[meta["type"]].append({
                     "sector_code": code,
                     "sector_name": meta["name"],
-                    "change_pct": float(row.get("pct_change", 0) or 0),
-                    "volume": float(row.get("vol", 0) or 0),
+                    "change_pct": float(pct) if pd.notna(pct) else 0.0,
+                    "volume": float(vol) if pd.notna(vol) else 0.0,
                 })
         except Exception:
             pass

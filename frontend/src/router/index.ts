@@ -8,6 +8,11 @@ import BacktestView from '../views/BacktestView.vue'
 import EtfListView from '../views/EtfListView.vue'
 import EtfGainersView from '../views/EtfGainersView.vue'
 import FinancialAnalysisView from '../views/FinancialAnalysisView.vue'
+import LimitLadderView from '../views/LimitLadderView.vue'
+import EmotionView from '../views/EmotionView.vue'
+import JournalView from '../views/JournalView.vue'
+import SystemView from '../views/SystemView.vue'
+import ScreenerView from '../views/ScreenerView.vue'
 import LoginView from '../views/LoginView.vue'
 import { useAuthStore } from '../stores/auth'
 
@@ -63,6 +68,24 @@ const router = createRouter({
       meta: { title: '财务分析' },
     },
     {
+      path: '/review/ladder',
+      name: 'limit-ladder',
+      component: LimitLadderView,
+      meta: { title: '连板梯队', parent: 'review' },
+    },
+    {
+      path: '/review/emotion',
+      name: 'emotion',
+      component: EmotionView,
+      meta: { title: '情绪周期', parent: 'review' },
+    },
+    {
+      path: '/review/journal',
+      name: 'journal',
+      component: JournalView,
+      meta: { title: '复盘日志', parent: 'review' },
+    },
+    {
       path: '/etfs',
       name: 'etf-list',
       component: EtfListView,
@@ -73,6 +96,18 @@ const router = createRouter({
       name: 'etf-gainers',
       component: EtfGainersView,
       meta: { title: 'ETF 涨幅榜', parent: 'etf' },
+    },
+    {
+      path: '/screener',
+      name: 'screener',
+      component: ScreenerView,
+      meta: { title: '通用选股器' },
+    },
+    {
+      path: '/system',
+      name: 'system',
+      component: SystemView,
+      meta: { title: '系统监控' },
     },
   ],
 })

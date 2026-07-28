@@ -6,6 +6,7 @@ from sqlmodel import Session, select
 
 from ..database import engine
 from ..models import BacktestRun, BacktestTrade
+from ..backtest.local_provider import LocalPigletProvider, local_coverage
 from ..backtest.piglet_backtest import PigletBacktestEngine, PigletBacktestParams
 from ..backtest.metrics import compute_backtest_metrics, equity_curve_to_dicts
 
@@ -13,7 +14,7 @@ from ..backtest.metrics import compute_backtest_metrics, equity_curve_to_dicts
 class BacktestService:
     """回测服务：运行回测、持久化结果与查询。"""
 
-    # 实时拉 Tushare 做回测时，为避免请求超时，限制最大回测区间（日历日）
+    # 本地缓存未覆盖时只能实时拉 Tushare 回测，为避免请求超时限制最大区间（日历日）
     MAX_REALTIME_RANGE_DAYS = 15
 
     def create_run(
@@ -60,7 +61,14 @@ class BacktestService:
             session.commit()
 
             try:
-                backtest_engine = PigletBacktestEngine(session, params)
+                # 本地缓存覆盖的区间走本地数据（不限区间长度），否则实时拉 Tushare
+                data_source = "tushare"
+                provider = None
+                if local_coverage(session, run.start_date, run.end_date):
+                    provider = LocalPigletProvider(session)
+                    data_source = "local"
+
+                backtest_engine = PigletBacktestEngine(session, params, provider=provider)
                 equity_curve, trades = backtest_engine.run(
                     run.start_date, run.end_date
                 )
@@ -89,6 +97,9 @@ class BacktestService:
                     )
 
                 run.status = "completed"
+                params_dict = json.loads(run.params_json) if run.params_json else {}
+                params_dict["data_source"] = data_source
+                run.params_json = json.dumps(params_dict, ensure_ascii=False)
                 run.metrics_json = json.dumps(metrics, ensure_ascii=False)
                 run.equity_curve_json = json.dumps(
                     equity_curve_to_dicts(equity_curve), ensure_ascii=False
@@ -101,14 +112,23 @@ class BacktestService:
                 run.completed_at = date.today()
                 session.commit()
 
-    def validate_date_range(self, start_date: date, end_date: date) -> Optional[str]:
-        """校验日期范围是否合法。返回错误信息或 None。"""
+    def validate_date_range(self, start_date: date, end_date: date, session: Session) -> Optional[str]:
+        """校验日期范围是否合法。返回错误信息或 None。
+
+        本地缓存（K线/涨停明细/交易日历）覆盖的区间不限长度；未覆盖的只能实时
+        拉 Tushare，限制最大 MAX_REALTIME_RANGE_DAYS 天。
+        """
         if start_date > end_date:
             return "start_date 不能晚于 end_date"
         days = (end_date - start_date).days
-        if days > self.MAX_REALTIME_RANGE_DAYS:
-            return f"实时 Tushare 回测暂限制最大 {self.MAX_REALTIME_RANGE_DAYS} 天，当前 {days} 天"
-        return None
+        if days <= self.MAX_REALTIME_RANGE_DAYS:
+            return None
+        if local_coverage(session, start_date, end_date):
+            return None
+        return (
+            f"回测区间 {days} 天超出实时模式 {self.MAX_REALTIME_RANGE_DAYS} 天限制，"
+            "且本地缓存未覆盖该区间（K线回填范围见系统监控页）"
+        )
 
     def get_backtest(self, run_id: int, session: Session) -> Optional[BacktestRun]:
         return session.get(BacktestRun, run_id)

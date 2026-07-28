@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 
 from .database import create_db_and_tables
-from .routers import stocks, bars, watchlist, overview, strategies, auth as auth_routes, backtest, etf, financial
+from .routers import stocks, bars, watchlist, overview, strategies, auth as auth_routes, backtest, etf, financial, review, journal, system, screener
 from .auth import require_auth
 from .config import settings
 
@@ -57,6 +57,10 @@ app.include_router(strategies.router, prefix="/api/strategies", tags=["strategie
 app.include_router(backtest.router, prefix="/api/backtests", tags=["backtests"], dependencies=_protected)
 app.include_router(etf.router, prefix="/api/etfs", tags=["etfs"], dependencies=_protected)
 app.include_router(financial.router, prefix="/api/financial", tags=["financial"], dependencies=_protected)
+app.include_router(review.router, prefix="/api/review", tags=["review"], dependencies=_protected)
+app.include_router(journal.router, prefix="/api/journal", tags=["journal"], dependencies=_protected)
+app.include_router(system.router, prefix="/api/system", tags=["system"], dependencies=_protected)
+app.include_router(screener.router, prefix="/api/screener", tags=["screener"], dependencies=_protected)
 
 
 @app.get("/api/health")

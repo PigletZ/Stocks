@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Tuple
 from sqlmodel import Session
 
 from ..strategies.piglet import PigletStrategy
-from ..strategies.piglet_provider import TusharePigletProvider
+from ..strategies.piglet_provider import PigletDataProvider, TusharePigletProvider
 
 
 @dataclass
@@ -60,10 +60,15 @@ class PigletBacktestEngine:
     规则：收盘后产生信号，下一交易日开盘买入，持有固定交易日后开盘卖出。
     """
 
-    def __init__(self, session: Session, params: PigletBacktestParams):
+    def __init__(
+        self,
+        session: Session,
+        params: PigletBacktestParams,
+        provider: Optional[PigletDataProvider] = None,
+    ):
         self.session = session
         self.params = params
-        self.provider = TusharePigletProvider()
+        self.provider = provider or TusharePigletProvider()
         self.strategy = PigletStrategy(
             window_days=params.window_days,
             provider=self.provider,

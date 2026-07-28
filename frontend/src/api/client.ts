@@ -89,6 +89,15 @@ export interface PaginatedStockList {
   page_size: number
 }
 
+export interface WatchlistPosition {
+  quantity: number
+  cost_price: number
+  source: 'journal' | 'manual'
+  unrealized_pnl: number | null
+  unrealized_pct: number | null
+  realized_pnl: number | null
+}
+
 export interface WatchlistItem {
   code: string
   name: string
@@ -105,6 +114,7 @@ export interface WatchlistItem {
   total_mv?: number
   pe?: number
   pb?: number
+  position?: WatchlistPosition | null
 }
 
 export interface WatchlistGroup {
@@ -725,7 +735,7 @@ export interface BacktestResult {
   start_date: string
   end_date: string
   initial_capital: number
-  params: string
+  params: Record<string, any>
   status: string
   error_message?: string
   metrics: BacktestMetrics
@@ -741,10 +751,10 @@ export interface BacktestRunInfo {
   start_date: string
   end_date: string
   initial_capital: number
-  params: string
+  params: Record<string, any>
   status: string
   error_message?: string
-  metrics?: BacktestMetrics
+  metrics?: BacktestMetrics | null
   created_at: string
   completed_at?: string
 }
@@ -860,5 +870,316 @@ export async function fetchFinancialHighlightRank(
   const { data } = await api.get('/financial/highlight-rank', {
     params: { limit, ...(date ? { date } : {}) },
   })
+  return data
+}
+
+// ==================== 涨停复盘 ====================
+
+export interface LimitLadderStock {
+  code: string
+  name: string
+  boards: number
+  up_stat?: string | null
+  pct_chg?: number | null
+  amount?: number | null
+  fd_amount?: number | null
+  first_time?: string | null
+  open_times?: number | null
+  float_mv?: number | null
+}
+
+export interface LimitLadderGroup {
+  boards: number
+  count: number
+  stocks: LimitLadderStock[]
+}
+
+export interface LimitLadderResponse {
+  trade_date: string | null
+  ladder: LimitLadderGroup[]
+  total: number
+}
+
+export async function fetchLimitLadder(date?: string): Promise<LimitLadderResponse> {
+  const { data } = await api.get('/review/limit-ladder', { params: { date } })
+  return data
+}
+
+export interface LimitPerfItem {
+  code: string
+  name: string
+  prev_boards: number
+  today_pct: number | null
+  today_boards: number | null
+  status: '晋级' | '炸板' | '红盘' | '绿盘' | '跌停'
+}
+
+export interface LimitPerfStats {
+  total: number
+  promoted: number
+  promote_rate: number
+  opened: number
+  limit_down: number
+  avg_pct: number | null
+}
+
+export interface LimitPerfResponse {
+  trade_date: string | null
+  prev_date: string | null
+  stats: LimitPerfStats
+  items: LimitPerfItem[]
+}
+
+export async function fetchLimitPerformance(date?: string): Promise<LimitPerfResponse> {
+  const { data } = await api.get('/review/limit-performance', { params: { date } })
+  return data
+}
+
+export interface EmotionItem {
+  date: string
+  limit_up: number
+  limit_down: number
+  opened_limit: number
+  break_rate: number | null
+  promote_rate: number | null
+  max_board: number
+  up: number
+  down: number
+  total_turnover: number
+}
+
+export async function fetchEmotionSeries(start?: string, end?: string): Promise<EmotionItem[]> {
+  const { data } = await api.get('/review/emotion', { params: { start, end } })
+  return data
+}
+
+export async function syncReviewData(date?: string): Promise<{ trade_date: string; limit_count: number; dragon_count: number }> {
+  const { data } = await api.post('/review/sync', null, { params: { date } })
+  return data
+}
+
+// ==================== 复盘日志 / 交易台账 ====================
+
+export interface ReviewNoteData {
+  note_date: string
+  content: string
+  codes: string[]
+  updated_at?: string
+}
+
+export async function fetchNote(date: string): Promise<ReviewNoteData> {
+  const { data } = await api.get('/journal/note', { params: { date } })
+  return data
+}
+
+export async function saveNote(date: string, content: string, codes: string[] = []): Promise<ReviewNoteData> {
+  const { data } = await api.put('/journal/note', { content, codes }, { params: { date } })
+  return data
+}
+
+export async function deleteNote(date: string): Promise<{ message: string }> {
+  const { data } = await api.delete('/journal/note', { params: { date } })
+  return data
+}
+
+export async function fetchNoteDates(year: number, month: number): Promise<{ note_dates: string[]; trade_dates: string[] }> {
+  const { data } = await api.get('/journal/note-dates', { params: { year, month } })
+  return data
+}
+
+export interface JournalTrade {
+  id: number
+  code: string
+  name: string
+  direction: 'buy' | 'sell'
+  price: number
+  quantity: number
+  amount: number
+  fee: number
+  traded_at: string
+  note?: string | null
+}
+
+export async function fetchJournalTrades(code?: string, start?: string, end?: string): Promise<JournalTrade[]> {
+  const { data } = await api.get('/journal/trades', { params: { code, start, end } })
+  return data
+}
+
+export interface JournalTradeInput {
+  stock_code: string
+  direction: 'buy' | 'sell'
+  price: number
+  quantity: number
+  fee: number
+  traded_at: string
+  note?: string | null
+}
+
+export async function createJournalTrade(trade: JournalTradeInput): Promise<JournalTrade> {
+  const { data } = await api.post('/journal/trades', trade)
+  return data
+}
+
+export async function deleteJournalTrade(id: number): Promise<{ message: string }> {
+  const { data } = await api.delete(`/journal/trades/${id}`)
+  return data
+}
+
+export interface PositionItem {
+  code: string
+  name: string
+  quantity: number
+  cost_price: number
+  close: number | null
+  unrealized_pnl: number | null
+  unrealized_pct: number | null
+  realized_pnl: number
+}
+
+export async function fetchPositions(): Promise<PositionItem[]> {
+  const { data } = await api.get('/journal/positions')
+  return data
+}
+
+export interface JournalStats {
+  total_realized: number
+  win_count: number
+  loss_count: number
+  win_rate: number | null
+  sell_count: number
+  buy_count: number
+  total_fee: number
+}
+
+export async function fetchJournalStats(): Promise<JournalStats> {
+  const { data } = await api.get('/journal/stats')
+  return data
+}
+
+// ==================== 手动持仓 ====================
+
+export async function upsertHolding(code: string, costPrice: number, quantity: number, note?: string): Promise<{ code: string; cost_price: number; quantity: number }> {
+  const { data } = await api.put(`/watchlist/holdings/${code}`, { cost_price: costPrice, quantity, note })
+  return data
+}
+
+export async function deleteHolding(code: string): Promise<{ message: string }> {
+  const { data } = await api.delete(`/watchlist/holdings/${code}`)
+  return data
+}
+
+// ==================== 系统监控 ====================
+
+export interface SystemDbInfo {
+  path: string | null
+  size_bytes: number | null
+  size_mb: number | null
+}
+
+export interface TableFreshness {
+  label: string
+  table: string
+  max_date: string | null
+  rows: number
+  age_days?: number
+  status: 'ok' | 'stale' | 'empty'
+}
+
+export interface CronJobHealth {
+  name: string
+  schedule: string
+  log: string
+  last_run: string | null
+  age_hours: number | null
+  status: 'ok' | 'stale' | 'error' | 'missing'
+  last_lines: string[]
+  error: string | null
+}
+
+export interface SystemStatus {
+  generated_at: string
+  database: SystemDbInfo
+  tables: TableFreshness[]
+  cron_jobs: CronJobHealth[]
+}
+
+export async function fetchSystemStatus(): Promise<SystemStatus> {
+  const { data } = await api.get('/system/status')
+  return data
+}
+
+// ==================== 回测网格寻优 ====================
+
+export interface GridBacktestRequest {
+  strategy_id: string
+  start_date: string
+  end_date: string
+  grid: Record<string, (number | boolean)[]>
+  base_params?: Record<string, any>
+}
+
+export async function runGridBacktest(req: GridBacktestRequest): Promise<{ run_ids: number[]; total: number }> {
+  const { data } = await api.post('/backtests/grid', req)
+  return data
+}
+
+// ==================== 通用选股器 ====================
+
+export interface ScreenCondition {
+  field: string
+  op: string
+  value: number
+}
+
+export interface ScreenerItem {
+  code: string
+  name: string
+  close: number | null
+  change_pct: number | null
+  turnover_rate: number | null
+  amount: number | null
+  float_mv: number | null
+  total_mv: number | null
+  pe_ttm: number | null
+  pb: number | null
+  limit_times: number
+  volume_ratio: number | null
+  ma_bull: boolean
+  high_days: number
+}
+
+export interface ScreenerResult {
+  trade_date: string | null
+  total: number
+  items: ScreenerItem[]
+}
+
+export async function runScreener(conditions: ScreenCondition[], tradeDate?: string, applyFilters = true): Promise<ScreenerResult> {
+  const { data } = await api.post('/screener/run', {
+    conditions,
+    trade_date: tradeDate || undefined,
+    apply_filters: applyFilters,
+  })
+  return data
+}
+
+export interface ScreenPreset {
+  id: number
+  name: string
+  conditions: ScreenCondition[]
+}
+
+export async function fetchScreenPresets(): Promise<ScreenPreset[]> {
+  const { data } = await api.get('/screener/presets')
+  return data
+}
+
+export async function createScreenPreset(name: string, conditions: ScreenCondition[]): Promise<ScreenPreset> {
+  const { data } = await api.post('/screener/presets', { name, conditions })
+  return data
+}
+
+export async function deleteScreenPreset(id: number): Promise<{ message: string }> {
+  const { data } = await api.delete(`/screener/presets/${id}`)
   return data
 }

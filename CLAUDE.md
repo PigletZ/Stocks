@@ -15,11 +15,14 @@
 
 ## 页面导航栏结构
 - 概览：主要包含日概览、涨停、跌停、龙虎榜、涨幅榜等，详情可参看：docs/overview.md
+- 复盘：连板梯队（昨日涨停今日表现）、情绪周期曲线、复盘日志（笔记+交易台账），详情可参看：docs/review.md
 - A股：主要包含所有股票信息以及自选股信息，详情可参看：docs/A_stocks.md
 - 策略选股：详情可参看：docs/policy.md
+- 选股器：通用条件组合筛选（可保存预设并接入策略选股），详情可参看：docs/policy.md 通用选股器一节
 - 策略回测：详情可参看：docs/policy.md 回测模块一节
 - 财务分析：1~10 只股票三大报表对比分析（不支持银行股），详情可参看：docs/financial-analysis.md
 - ETF：全 ETF 列表与 ETF 涨幅榜，详情可参看：docs/etf.md
+- 系统监控：缓存表新鲜度与定时任务健康度，详情可参看：docs/system.md
 - Tushare 接口权限归档：docs/tushare_permissions.md
 
 ## 目录结构

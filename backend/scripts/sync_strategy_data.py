@@ -8,7 +8,7 @@ import time
 from datetime import date, datetime, timedelta
 from typing import List
 
-from sqlmodel import Session, select
+from sqlmodel import Session, select, delete
 
 import sys
 from pathlib import Path
@@ -47,28 +47,33 @@ def sync_daily_quotes(days: int = 30) -> None:
     with Session(engine) as session:
         for date_str in trade_dates:
             trade_date = datetime.strptime(date_str, "%Y%m%d").date()
-            quotes = service.fetch_daily_quotes(trade_date)
+            try:
+                quotes = service.fetch_daily_quotes(trade_date)
 
-            for quote in quotes:
-                existing = session.exec(
-                    select(StockDailyQuote)
-                    .where(StockDailyQuote.stock_code == quote.stock_code)
-                    .where(StockDailyQuote.trade_date == quote.trade_date)
-                ).first()
-                if existing:
-                    for field in [
-                        "close", "change_pct", "amount", "turnover_rate", "turnover_rate_f",
-                        "float_mv", "total_mv", "pe", "pe_ttm", "pb", "ps", "ps_ttm",
-                        "dv_ratio", "dv_ttm",
-                    ]:
-                        setattr(existing, field, getattr(quote, field))
-                    existing.updated_at = datetime.utcnow()
-                    session.add(existing)
-                else:
-                    session.add(quote)
+                for quote in quotes:
+                    existing = session.exec(
+                        select(StockDailyQuote)
+                        .where(StockDailyQuote.stock_code == quote.stock_code)
+                        .where(StockDailyQuote.trade_date == quote.trade_date)
+                    ).first()
+                    if existing:
+                        for field in [
+                            "close", "change_pct", "amount", "turnover_rate", "turnover_rate_f",
+                            "float_mv", "total_mv", "pe", "pe_ttm", "pb", "ps", "ps_ttm",
+                            "dv_ratio", "dv_ttm",
+                        ]:
+                            setattr(existing, field, getattr(quote, field))
+                        existing.updated_at = datetime.utcnow()
+                        session.add(existing)
+                    else:
+                        session.add(quote)
 
-            session.commit()
-            print(f"  {trade_date}: {len(quotes)} 只股票")
+                session.commit()
+                print(f"  {trade_date}: {len(quotes)} 只股票")
+            except Exception as e:
+                session.rollback()
+                print(f"  {trade_date} 同步失败: {e}")
+                continue
 
     print("StockDailyQuote 同步完成")
 
@@ -104,18 +109,16 @@ def sync_bars(days: int = 365, sleep_seconds: float = 0.3) -> None:
                 min_ts = min(b.timestamp for b in bars)
                 max_ts = max(b.timestamp for b in bars)
 
-                old_bars = session.exec(
-                    select(Bar)
+                # 必须用 Core DELETE（立即执行）：ORM session.delete() + add() 同事务
+                # 提交时 UOW 先 INSERT 后 DELETE，必撞 (stock_code, timestamp, interval) 唯一约束
+                session.exec(
+                    delete(Bar)
                     .where(Bar.stock_code == code)
                     .where(Bar.interval == "1d")
                     .where(Bar.timestamp >= min_ts)
                     .where(Bar.timestamp <= max_ts)
-                ).all()
-                for old in old_bars:
-                    session.delete(old)
-
-                for bar in bars:
-                    session.add(bar)
+                )
+                session.add_all(bars)
                 session.commit()
 
                 if i % 50 == 0:
@@ -123,6 +126,7 @@ def sync_bars(days: int = 365, sleep_seconds: float = 0.3) -> None:
 
                 time.sleep(sleep_seconds)
             except Exception as e:
+                session.rollback()
                 print(f"  同步 {code} 失败: {e}")
                 continue
 

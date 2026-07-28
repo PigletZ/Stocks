@@ -90,9 +90,9 @@ defineEmits<{
   (e: 'run', req: BacktestRequest): void
 }>()
 
-// 默认回测最近 15 天（实时 Tushare 模式暂限制最大 15 天）
+// 默认回测最近 3 个月（本地缓存覆盖的区间不限长度）
 const today = new Date()
-const startDay = new Date(today.getTime() - 15 * 24 * 60 * 60 * 1000)
+const startDay = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000)
 
 function fmt(d: Date) {
   return d.toISOString().split('T')[0]

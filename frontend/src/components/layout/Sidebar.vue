@@ -12,6 +12,11 @@
         <span>策略选股</span>
       </router-link>
 
+      <router-link to="/screener" class="nav-item" :class="{ active: $route.name === 'screener' }">
+        <span class="icon">🔍</span>
+        <span>选股器</span>
+      </router-link>
+
       <router-link to="/backtest" class="nav-item" :class="{ active: $route.name === 'backtest' }">
         <span class="icon">📈</span>
         <span>策略回测</span>
@@ -38,6 +43,24 @@
       </div>
 
       <div class="nav-group">
+        <div class="nav-group-title" @click="reviewExpanded = !reviewExpanded">
+          <span>复盘</span>
+          <span class="arrow" :class="{ expanded: reviewExpanded }">▶</span>
+        </div>
+        <div v-show="reviewExpanded" class="nav-sub">
+          <router-link to="/review/ladder" class="nav-item" :class="{ active: $route.name === 'limit-ladder' }">
+            连板梯队
+          </router-link>
+          <router-link to="/review/emotion" class="nav-item" :class="{ active: $route.name === 'emotion' }">
+            情绪周期
+          </router-link>
+          <router-link to="/review/journal" class="nav-item" :class="{ active: $route.name === 'journal' }">
+            复盘日志
+          </router-link>
+        </div>
+      </div>
+
+      <div class="nav-group">
         <div class="nav-group-title" @click="etfExpanded = !etfExpanded">
           <span>ETF</span>
           <span class="arrow" :class="{ expanded: etfExpanded }">▶</span>
@@ -51,6 +74,10 @@
           </router-link>
         </div>
       </div>
+      <router-link to="/system" class="nav-item" :class="{ active: $route.name === 'system' }">
+        <span class="icon">⚙️</span>
+        <span>系统监控</span>
+      </router-link>
     </nav>
 
     <div class="sidebar-footer">
@@ -67,6 +94,7 @@ import { useAuthStore } from '../../stores/auth'
 
 const aSharesExpanded = ref(true)
 const etfExpanded = ref(true)
+const reviewExpanded = ref(true)
 const router = useRouter()
 const auth = useAuthStore()
 

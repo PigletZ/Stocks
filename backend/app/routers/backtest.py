@@ -42,7 +42,7 @@ def run_backtest(
     start_date = _parse_date(req.start_date)
     end_date = _parse_date(req.end_date)
 
-    error = service.validate_date_range(start_date, end_date)
+    error = service.validate_date_range(start_date, end_date, session)
     if error:
         raise HTTPException(status_code=400, detail=error)
 
@@ -59,6 +59,66 @@ def run_backtest(
         raise HTTPException(status_code=500, detail=f"创建回测任务失败: {e}")
 
     return {"run_id": run.id, "status": "pending"}
+
+
+class GridBacktestRequest(BaseModel):
+    strategy_id: str = Field(default="piglet")
+    start_date: str
+    end_date: str
+    grid: Dict[str, List[Any]] = Field(
+        ...,
+        description="参数网格，如 {\"window_days\": [3,5], \"hold_days\": [3,5,10]}",
+    )
+    base_params: Dict[str, Any] = Field(default_factory=dict, description="不参与网格的基础参数")
+
+
+MAX_GRID_COMBOS = 24
+
+
+@router.post("/grid")
+def run_grid_backtest(
+    req: GridBacktestRequest,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+):
+    """参数网格寻优：对参数组合逐个建回测任务，后台顺序执行，返回 run_id 列表。"""
+    import itertools
+
+    service = BacktestService()
+    start_date = _parse_date(req.start_date)
+    end_date = _parse_date(req.end_date)
+
+    error = service.validate_date_range(start_date, end_date, session)
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+
+    keys = list(req.grid.keys())
+    values = [req.grid[k] for k in keys]
+    combos = [dict(zip(keys, c)) for c in itertools.product(*values)]
+    if not combos:
+        raise HTTPException(status_code=400, detail="参数网格为空")
+    if len(combos) > MAX_GRID_COMBOS:
+        raise HTTPException(status_code=400, detail=f"参数组合 {len(combos)} 个，超过上限 {MAX_GRID_COMBOS}")
+
+    runs = []
+    for combo in combos:
+        merged = {**req.base_params, **combo}
+        params = service.parse_params(merged)
+        run = service.create_run(
+            strategy_id=req.strategy_id,
+            start_date=start_date,
+            end_date=end_date,
+            params=params,
+            session=session,
+        )
+        runs.append((run.id, params))
+
+    def _run_all():
+        for run_id, params in runs:
+            service.execute_backtest(run_id, params)
+
+    background_tasks.add_task(_run_all)
+    return {"run_ids": [r[0] for r in runs], "total": len(runs)}
 
 
 @router.get("/{run_id}")

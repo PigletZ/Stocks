@@ -101,16 +101,25 @@ GET /api/strategies/{strategy_id}/picks?trade_date=YYYY-MM-DD&force_refresh=fals
 
 ### 数据与范围限制
 
-- 当前回测实时从 Tushare 拉取数据，引擎内部带日期级缓存减少重复请求
-- 为避免长请求超时，回测改为后台异步执行：`POST /api/backtests/run` 立即返回 `run_id`，前端轮询结果
-- 实时 Tushare 模式限制最大回测区间为 **15 天**（日历日），超出会报错
+- 回测为后台异步执行：`POST /api/backtests/run` 立即返回 `run_id`，前端轮询结果
+- 数据源自动选择（记录于 `params.data_source`）：
+  - **本地缓存**（`LocalPigletProvider`，读 bar / limit_up_daily / dragon_tiger_daily / marketdailystat）：覆盖区间内**不限长度**，K线已按交易日回填 2 年（`scripts/import_bars_history.py`，484 个交易日约 150 万行）
+  - **实时 Tushare**：本地未覆盖的区间回退实时拉取，限制最大 **15 天**（日历日）
+- 参数网格寻优：`POST /api/backtests/grid`，参数组合逐个建任务后台顺序执行，上限 24 组，前端对比表按总收益排序
 
 ## 缓存机制
 
 策略结果缓存已禁用：每次请求都实时计算。`force_refresh` 参数保留在接口签名中，当前无实际作用。历史计算结果会持久化到本地数据库，可按交易日回看。
 
+## 通用选股器
+
+- 入口：`/screener`，接口：`POST /api/screener/run`（条件 AND 组合）
+- 条件字段：涨跌幅、换手率、成交额(亿)、流通/总市值(亿)、PE、PB（stockdailyquote）；连板数（limit_up_daily）；均线多头、N日新高、量比（bar 派生）
+- 默认与策略选股统一过滤（ST/科创/创业/北交/次新），可取消
+- 预设：`/api/screener/presets` CRUD（`screen_preset` 表）；保存的预设以 `screen:{id}` 出现在策略选股页的策略列表中，按保存的条件执行
+
 ## 后续规划
 
 - 增加更多选股策略
 - 支持策略组合与权重配置
-- 回测数据改为本地缓存后可放开 15 天区间限制
+- ~~回测数据改为本地缓存后可放开 15 天区间限制~~（已完成，见回测模块一节）
