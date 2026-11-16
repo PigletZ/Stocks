@@ -87,7 +87,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import ChartPanel from '../components/ChartPanel.vue'
 import { fetchBars, syncBars, fetchStock, recordRecentView } from '../api/client'
@@ -215,9 +215,12 @@ watch(speed, () => {
 })
 
 watch(code, () => {
+  pause()
   loadStockInfo()
   loadBars()
 })
+
+onUnmounted(pause)
 
 onMounted(() => {
   loadStockInfo()

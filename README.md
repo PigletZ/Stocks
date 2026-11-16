@@ -86,6 +86,18 @@ journalctl -u stocks -f      # 查看日志（同时输出到 backend/logs/serve
 | 公网 IP / 域名 | `backend/.env` 的 `PUBLIC_HOST` | CORS 白名单 |
 | 登录账号/密钥 | `backend/.env` 的 `AUTH_USERNAME` / `AUTH_PASSWORD` / `AUTH_SECRET` | 单账号登录 |
 
+首次启动前复制 `backend/.env.example` 为 `backend/.env` 并填写登录配置。
+登录账号和密码不得为空，签名密钥至少 32 字符，建议使用 `python -c "import secrets; print(secrets.token_hex(32))"` 生成。
+缺少配置时后端拒绝启动；配置文件按绝对项目路径加载，不依赖启动目录。真实凭据只保存在服务器环境或被 Git 忽略的 `.env` 中。
+修改登录账号、密码或签名密钥后需重启服务，已有 token 随即失效。本次鉴权升级也会使升级前的登录态失效，需要重新登录。
+
+核心回归验证（在已安装后端依赖的环境执行，不访问 Tushare、不写业务数据库）：
+
+```bash
+cd backend
+python -m unittest discover -s tests -v
+```
+
 ## 数据同步
 
 系统 crontab 在每个交易日收盘后自动同步数据：

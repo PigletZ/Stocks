@@ -1,5 +1,5 @@
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from sqlmodel import Session, select
@@ -34,6 +34,8 @@ class BacktestService:
             "require_dragon": params.require_dragon,
             "initial_capital": params.initial_capital,
             "commission_rate": params.commission_rate,
+            "execution_version": 2,
+            "end_policy": "mark_to_market",
         }
 
         run = BacktestRun(
@@ -104,12 +106,12 @@ class BacktestService:
                 run.equity_curve_json = json.dumps(
                     equity_curve_to_dicts(equity_curve), ensure_ascii=False
                 )
-                run.completed_at = date.today()
+                run.completed_at = datetime.utcnow()
                 session.commit()
             except Exception as e:
                 run.status = "failed"
                 run.error_message = str(e)
-                run.completed_at = date.today()
+                run.completed_at = datetime.utcnow()
                 session.commit()
 
     def validate_date_range(self, start_date: date, end_date: date, session: Session) -> Optional[str]:

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from ..database import get_session
 from ..models import Trade

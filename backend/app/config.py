@@ -1,7 +1,7 @@
 import configparser
 from pathlib import Path
 from pydantic_settings import BaseSettings
-from pydantic import field_validator
+from pydantic import Field, field_validator
 
 
 def _load_tushare_token() -> str:
@@ -20,15 +20,21 @@ def _load_tushare_token() -> str:
 class Settings(BaseSettings):
     database_url: str = "sqlite:///./stocks.db"
     tushare_token: str = ""
-    public_host: str = ""  # 公网 IP 或域名，用于 CORS 白名单，如 120.25.245.13
+    public_host: str = ""  # 公网 IP 或域名，用于 CORS 白名单
 
-    # 登录认证（个人工具，单账号即可）。可在 .env 中覆盖。
-    auth_username: str = "root"
-    auth_password: str = "root@123"
-    # token 签名密钥，生产环境务必在 .env 中改成随机值
-    auth_secret: str = "stocks-default-secret-change-me"
+    # 必须由环境变量或 backend/.env 提供，禁止回退到内置凭据。
+    auth_username: str = Field(min_length=1)
+    auth_password: str = Field(min_length=1)
+    auth_secret: str = Field(min_length=32)
     # token 有效期（秒），默认 7 天
-    auth_token_ttl: int = 7 * 24 * 3600
+    auth_token_ttl: int = Field(default=7 * 24 * 3600, gt=0)
+
+    @field_validator("auth_username", "auth_password", "auth_secret")
+    @classmethod
+    def _reject_blank_credentials(cls, value):
+        if not value.strip():
+            raise ValueError("Authentication configuration must not be blank")
+        return value
 
     @field_validator("tushare_token", mode="before")
     @classmethod
@@ -39,7 +45,8 @@ class Settings(BaseSettings):
         return v
 
     class Config:
-        env_file = ".env"
+        env_file = Path(__file__).resolve().parent.parent / ".env"
+        hide_input_in_errors = True
 
 
 settings = Settings()

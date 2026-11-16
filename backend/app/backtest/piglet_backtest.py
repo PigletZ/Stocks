@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date
 from typing import Dict, List, Optional, Tuple
 
 from sqlmodel import Session
@@ -82,9 +82,8 @@ class PigletBacktestEngine:
         if not signal_dates:
             return [], []
 
-        # 需要额外交易日来平仓最后一个买入的仓位
-        extra_end = end_date + timedelta(days=self.params.hold_days * 2 + 10)
-        all_dates = self.provider.get_trade_dates_in_range(start_date, extra_end)
+        # 按所选结束日收盘估值；未平仓头寸计入市值，不执行区间外交易。
+        all_dates = signal_dates
 
         date_index = {d: i for i, d in enumerate(all_dates)}
 
@@ -133,7 +132,7 @@ class PigletBacktestEngine:
             # 买入：来自上一交易日收盘后的信号
             if pending_buys:
                 # 当前总权益（用于目标仓位）
-                current_total = cash + self._portfolio_market_value(positions, d)
+                current_total = cash + self._portfolio_market_value(positions, d, price_field="open")
                 target_value = current_total / self.params.max_positions
 
                 executed = 0
@@ -208,7 +207,7 @@ class PigletBacktestEngine:
             )
 
             # ---------- 收盘后：产生新信号 ----------
-            if d in signal_dates:
+            if d < all_dates[-1]:
                 picks = self.strategy.select(d, self.session)
                 for pick in picks:
                     if self.params.require_dragon and not pick.raw_data.get("has_dragon"):
@@ -224,11 +223,9 @@ class PigletBacktestEngine:
                         )
                     )
 
-        # 过滤权益曲线，只保留原回测区间内的点用于展示
-        equity_curve = [s for s in equity_curve if start_date <= s.date <= end_date]
         return equity_curve, trades
 
-    def _portfolio_market_value(self, positions: List[Position], d: date) -> float:
+    def _portfolio_market_value(self, positions: List[Position], d: date, price_field: str = "close") -> float:
         total = 0.0
         for p in positions:
             ohlc = self.provider.get_daily_ohlc(p.code, d)
@@ -236,5 +233,5 @@ class PigletBacktestEngine:
                 # 无数据时按买入价估算，避免权益曲线异常跳动
                 total += p.buy_price * p.quantity
             else:
-                total += ohlc["close"] * p.quantity
+                total += ohlc[price_field] * p.quantity
         return total

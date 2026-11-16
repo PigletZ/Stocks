@@ -32,10 +32,15 @@ def _b64decode(raw: str) -> dict:
     return json.loads(base64.urlsafe_b64decode(raw + pad))
 
 
+def _credential_tag() -> str:
+    """绑定当前账号密码，凭据变化后旧 token 自动失效。"""
+    return _sign(json.dumps(["credentials-v1", settings.auth_username, settings.auth_password]))
+
+
 def create_token(username: str) -> dict:
     """签发 token，返回 {token, expires_at}（expires_at 为 Unix 秒）。"""
     expires_at = int(time.time()) + settings.auth_token_ttl
-    raw = _b64encode({"u": username, "exp": expires_at})
+    raw = _b64encode({"u": username, "exp": expires_at, "cv": _credential_tag()})
     return {"token": f"{raw}.{_sign(raw)}", "expires_at": expires_at}
 
 
@@ -44,21 +49,31 @@ def verify_token(token: str) -> Optional[str]:
     if not token or "." not in token:
         return None
     raw, sig = token.rsplit(".", 1)
-    if not hmac.compare_digest(sig, _sign(raw)):
+    if not hmac.compare_digest(sig.encode(), _sign(raw).encode()):
         return None
     try:
         payload = _b64decode(raw)
     except Exception:
         return None
-    if int(payload.get("exp", 0)) < time.time():
+    if not isinstance(payload, dict):
         return None
-    return payload.get("u")
+    expires_at = payload.get("exp")
+    if type(expires_at) is not int or expires_at <= time.time():
+        return None
+    if payload.get("u") != settings.auth_username:
+        return None
+    credential_tag = payload.get("cv")
+    if not isinstance(credential_tag, str) or not hmac.compare_digest(
+        credential_tag.encode(), _credential_tag().encode()
+    ):
+        return None
+    return settings.auth_username
 
 
 def verify_credentials(username: str, password: str) -> bool:
     """校验账号密码（常量时间比较，避免时序侧信道）。"""
-    return hmac.compare_digest(username or "", settings.auth_username) and hmac.compare_digest(
-        password or "", settings.auth_password
+    return hmac.compare_digest((username or "").encode(), settings.auth_username.encode()) and hmac.compare_digest(
+        (password or "").encode(), settings.auth_password.encode()
     )
 
 

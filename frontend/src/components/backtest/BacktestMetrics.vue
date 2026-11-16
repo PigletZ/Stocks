@@ -1,7 +1,7 @@
 <template>
   <div class="metrics-grid">
     <div class="metric-card highlight">
-      <div class="label">总收益</div>
+      <div class="label" title="截至结束日收盘，包含未平仓持仓的浮动盈亏">总收益</div>
       <div class="value" :class="pctClass(metrics?.total_return_pct)">{{ formatPct(metrics?.total_return_pct) }}</div>
     </div>
 
@@ -21,7 +21,7 @@
     </div>
 
     <div class="metric-card">
-      <div class="label">胜率</div>
+      <div class="label" title="仅统计回测区间内已卖出的交易">胜率</div>
       <div class="value">{{ metrics?.win_rate_pct?.toFixed(2) ?? '-' }}%</div>
     </div>
 
