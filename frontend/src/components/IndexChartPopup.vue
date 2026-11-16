@@ -1,7 +1,7 @@
 <template>
   <div class="index-chart-popup">
     <div class="popup-header">
-      <span class="popup-title">{{ name }} · 近30日</span>
+      <span class="popup-title">{{ name }} · 截至 {{ endDate || '最新' }} · 近30个交易日</span>
       <span v-if="loading" class="loading-text">加载中...</span>
       <span v-else-if="error" class="error-text">{{ error }}</span>
     </div>
@@ -25,6 +25,7 @@ import type { Bar } from '../api/client'
 const props = defineProps<{
   code: string
   name: string
+  endDate?: string
 }>()
 
 const bars = ref<Bar[]>([])
@@ -42,9 +43,9 @@ async function loadBars() {
   loading.value = true
   error.value = ''
   try {
-    const end = formatDate(new Date())
-    const start = formatDate(new Date(Date.now() - 90 * 24 * 60 * 60 * 1000))
-    bars.value = await fetchIndexBars(props.code, start, end)
+    const end = props.endDate || formatDate(new Date())
+    const start = formatDate(new Date(new Date(`${end}T12:00:00`).getTime() - 90 * 24 * 60 * 60 * 1000))
+    bars.value = (await fetchIndexBars(props.code, start, end)).slice(-30)
   } catch (err: any) {
     error.value = '加载失败'
     console.error('Failed to load index bars', err)

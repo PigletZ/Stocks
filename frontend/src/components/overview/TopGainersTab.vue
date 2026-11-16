@@ -3,7 +3,6 @@
     <div class="tab-header">
       <h2>涨幅榜</h2>
       <div class="header-controls">
-        <input type="date" v-model="selectedDate" @change="onDateChange" />
         <span v-if="effectiveDate && effectiveDate !== selectedDate" class="date-note">
           数据日期：{{ effectiveDate }}
         </span>
@@ -11,6 +10,7 @@
       </div>
     </div>
 
+    <p v-if="error" class="error-message" role="alert">{{ error }}</p>
     <div class="rankings-grid">
       <section class="ranking-panel">
         <h3>五日涨幅榜</h3>
@@ -142,23 +142,27 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { fetchTopGainers } from '../../api/client'
 import type { TopGainerItem } from '../../api/client'
+
+const props = defineProps<{ tradeDate: string }>()
 
 defineEmits<{
   'add-watchlist': [code: string]
 }>()
 
-const selectedDate = ref(new Date().toISOString().split('T')[0])
+const selectedDate = computed(() => props.tradeDate)
 const effectiveDate = ref('')
 const fiveDay = ref<TopGainerItem[]>([])
 const tenDay = ref<TopGainerItem[]>([])
 const twentyDay = ref<TopGainerItem[]>([])
 const loading = ref(false)
+const error = ref('')
 
 async function loadData() {
   loading.value = true
+  error.value = ''
   try {
     const res = await fetchTopGainers(selectedDate.value)
     effectiveDate.value = res.effective_date
@@ -166,14 +170,11 @@ async function loadData() {
     tenDay.value = res.ten_day
     twentyDay.value = res.twenty_day
   } catch (err) {
+    error.value = '涨幅榜加载失败，请稍后重试。'
     console.error('Failed to load top gainers', err)
   } finally {
     loading.value = false
   }
-}
-
-function onDateChange() {
-  loadData()
 }
 
 function formatAmount(amount: number): string {
@@ -197,6 +198,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.error-message { color:#fca5a5; font-size:13px; }
 .top-gainers-tab {
   background: #1f2937;
   border-radius: 10px;

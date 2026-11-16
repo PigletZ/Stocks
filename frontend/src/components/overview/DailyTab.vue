@@ -1,1033 +1,178 @@
 <template>
   <div class="daily-tab">
-    <!-- 日期选择器 -->
-    <section class="date-bar">
-      <div class="date-info">
-        <span v-if="!isToday" class="date-note">查看历史数据</span>
-        <span v-if="loading" class="loading-text">加载中...</span>
-      </div>
-      <div class="date-controls">
-        <button class="nav-btn" @click="prevDay" title="上一日">◀</button>
-        <input
-          type="date"
-          :value="selectedDate"
-          class="date-input"
-          @change="onDateInputChange"
-        />
-        <button class="nav-btn" @click="nextDay" title="下一日">▶</button>
-        <button class="today-btn" @click="goToday">今天</button>
-        <button
-          class="sync-btn"
-          :disabled="syncing"
-          @click="syncToday"
-          title="重新拉取当前日期的指数与市场统计数据"
-        >
-          {{ syncing ? '同步中...' : '同步数据' }}
-        </button>
-      </div>
+    <section class="panel summary">
+      <div class="panel-header"><h2>当日变化</h2><button :disabled="syncing" @click="syncData">{{ syncing ? '同步中…' : '同步所选日期' }}</button></div>
+      <p v-if="!current">所选日期尚无收盘统计。可选择已有数据日期，或在收盘数据发布后同步。</p>
+      <template v-else>
+        <p v-for="line in summaryLines" :key="line">{{ line }}</p>
+        <p v-if="!previous" class="muted">暂无更早统计，暂不计算变化。</p>
+      </template>
+      <p v-if="syncError" class="error" role="alert">{{ syncError }}</p>
+      <p v-if="dashboard.status === 'partial'" class="notice">指数、市场广度或成交额尚未齐备。缺失指标显示 —，不会按零计算。</p>
     </section>
 
-    <!-- 主要指数 -->
-    <section class="indices-section">
-      <div class="section-title">
-        <h2>主要指数</h2>
-      </div>
-      <div v-if="indices.length > 0" class="indices-grid">
-        <div
-          v-for="index in indices"
-          :key="index.code"
-          class="index-card"
-          :class="{ up: index.change_pct >= 0, down: index.change_pct < 0 }"
-          @mouseenter="hoveredIndexCode = index.code"
-          @mouseleave="hoveredIndexCode = ''"
-        >
-          <div class="index-name">{{ index.name }}</div>
-          <div class="index-price">{{ index.price.toFixed(2) }}</div>
-          <div class="index-change">
-            <span>{{ index.change >= 0 ? '+' : '' }}{{ index.change.toFixed(2) }}</span>
-            <span>{{ index.change_pct >= 0 ? '+' : '' }}{{ index.change_pct.toFixed(2) }}%</span>
-          </div>
-          <IndexChartPopup
-            v-if="hoveredIndexCode === index.code"
-            :code="index.code"
-            :name="index.name"
-            class="index-chart-popup"
-          />
-        </div>
-      </div>
-      <div v-else class="empty-panel">暂无指数数据</div>
+    <section class="metrics-grid" aria-label="市场核心指标">
+      <article v-for="metric in metrics" :key="metric.label" class="metric-card">
+        <div class="label">{{ metric.label }}</div>
+        <strong :class="metric.tone">{{ metric.value }}</strong>
+        <div class="comparison">{{ metric.comparison }}</div>
+        <small>{{ metric.note }}</small>
+      </article>
     </section>
 
-    <!-- 市场统计 + 趋势图 -->
-    <section class="stats-chart-row">
-      <!-- 市场统计 -->
-      <div class="stats-section">
-        <div class="section-title">
-          <h2>市场统计</h2>
-          <span v-if="!isToday" class="history-note">历史日期仅展示涨跌停/炸板数</span>
-        </div>
-        <div class="stats-grid">
-          <div class="stat-card up-down">
-            <div class="stat-label">涨跌家数</div>
-            <div class="stat-value">
-              <span class="up-count">{{ marketSummary.up }}</span>
-              <span class="separator">|</span>
-              <span class="down-count">{{ marketSummary.down }}</span>
-            </div>
-          </div>
-          <template v-if="isToday">
-            <div class="stat-card flat">
-              <div class="stat-label">平盘家数</div>
-              <div class="stat-value">{{ marketSummary.flat }}</div>
-            </div>
-            <div class="stat-card total">
-              <div class="stat-label">总家数</div>
-              <div class="stat-value">{{ marketSummary.total }}</div>
-            </div>
-          </template>
-          <div class="stat-card turnover">
-            <div class="stat-label">总成交额</div>
-            <div class="stat-value">{{ formatAmount(marketSummary.total_turnover) }}</div>
-          </div>
-          <div class="stat-card limit-up">
-            <div class="stat-label">涨停</div>
-            <div class="stat-value">{{ marketSummary.limit_up }}</div>
-          </div>
-          <div class="stat-card limit-down">
-            <div class="stat-label">跌停</div>
-            <div class="stat-value">{{ marketSummary.limit_down }}</div>
-          </div>
-          <div class="stat-card opened-limit">
-            <div class="stat-label">炸板</div>
-            <div class="stat-value">{{ marketSummary.opened_limit }}</div>
-          </div>
-        </div>
+    <section class="indices-grid" aria-label="主要指数">
+      <div v-for="index in dashboard.indices" :key="index.code" class="index-card" @mouseenter="hoveredIndexCode = index.code" @mouseleave="hoveredIndexCode = ''">
+        <span>{{ index.name }}</span><strong>{{ index.price.toFixed(2) }}</strong>
+        <b :class="changeClass(index.change_pct)">{{ signed(index.change_pct) }}%</b>
+        <IndexChartPopup v-if="hoveredIndexCode === index.code" :code="index.code" :name="index.name" :end-date="dashboard.date" />
       </div>
-
-      <!-- 市场情绪趋势图 -->
-      <div class="chart-section">
-        <div class="chart-header">
-          <h2>市场情绪趋势</h2>
-          <div class="chart-controls">
-            <button
-              v-for="range in quickRanges"
-              :key="range.label"
-              class="range-btn"
-              :class="{ active: activeRange === range.label }"
-              @click="setQuickRange(range)"
-            >
-              {{ range.label }}
-            </button>
-            <input type="date" v-model="chartStart" />
-            <span class="range-separator">至</span>
-            <input type="date" v-model="chartEnd" />
-            <button class="btn-primary" @click="loadMarketHistory">生成</button>
-          </div>
-        </div>
-        <div ref="historyChart" class="history-chart"></div>
-        <div v-if="historyNote" class="history-note">{{ historyNote }}</div>
-      </div>
+      <div v-if="!dashboard.indices.length" class="empty">所选日期暂无指数数据</div>
     </section>
 
-    <!-- 板块排行 -->
-    <section class="sector-ranking-section">
-      <div class="section-title">
-        <h2>板块排行</h2>
-        <span v-if="sectorLoading" class="loading-text">加载中...</span>
+    <section class="panel">
+      <div class="panel-header"><div><h2>近期趋势</h2><small>截至 {{ dashboard.date }} · 按已有收盘记录展示，缺失指标留空</small></div>
+        <div class="toggle"><button v-for="n in [20, 60]" :key="n" :class="{ active: range === n }" @click="range = n">近{{ n }}日</button></div>
+      </div>
+      <MarketTrendChart :history="dashboard.history" :range="range" />
+    </section>
+
+    <section class="panel">
+      <div class="panel-header"><div><h2>短线结构</h2><small>仅在涨停明细与当日统计匹配时计算</small></div>
+        <router-link :to="{ path: '/review/ladder', query: { date: dashboard.date } }">查看连板梯队 →</router-link>
+      </div>
+      <div class="structure-grid">
+        <div><span>首板 / 二板 / 三板及以上</span><strong>{{ number(shortTerm.first_board) }} / {{ number(shortTerm.second_board) }} / {{ number(shortTerm.higher_board) }}</strong></div>
+        <div><span>最高连板</span><strong>{{ number(shortTerm.max_board) }} <small>板</small></strong></div>
+        <div><span>前次涨停今日平均涨幅</span><strong :class="changeClass(shortTerm.avg_pct)">{{ percent(shortTerm.avg_pct, true) }}</strong><small>有效报价 {{ shortTerm.quote_samples }} / {{ number(shortTerm.previous_count) }} 家</small></div>
+        <div><span>前次涨停继续涨停</span><strong>{{ number(shortTerm.promoted) }} / {{ number(shortTerm.previous_count) }} <small>家</small></strong></div>
+      </div>
+      <div v-if="shortTerm.leaders.length" class="leaders"><span>最高板个股</span><router-link v-for="stock in shortTerm.leaders" :key="stock.code" :to="`/stock/${stock.code}`">{{ stock.name }} <small>{{ stock.code }}</small></router-link></div>
+      <p v-if="!shortTerm.ready" class="notice">涨停明细尚未齐备，连板结构暂不计算。</p>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header"><div><h2>板块强弱</h2><small>排名变化对比 {{ previous?.date || '—' }}；成交量单位：手，不代表资金净流入</small></div>
+        <div class="toggle"><button v-for="mode in sectorModes" :key="mode.key" :class="{ active: sectorMode === mode.key }" @click="sectorMode = mode.key">{{ mode.label }}</button></div>
       </div>
       <div class="sector-grid">
-        <section class="panel">
-          <div class="panel-header">
-            <h2>行业板块涨幅</h2>
-            <div class="sort-toggle">
-              <button
-                class="toggle-btn"
-                :class="{ active: industrySortBy === 'change_pct' }"
-                @click="industrySortBy = 'change_pct'"
-              >
-                涨跌幅
-              </button>
-              <button
-                class="toggle-btn"
-                :class="{ active: industrySortBy === 'volume' }"
-                @click="industrySortBy = 'volume'"
-              >
-                成交量
-              </button>
-            </div>
+        <div v-for="group in sectorGroups" :key="group.label">
+          <h3>{{ group.label }} <small>{{ group.rows.length }} 个</small></h3>
+          <div class="sector-head"><span>板块 / 排名变化</span><span>{{ sectorMode === 'volume' ? '成交量' : '涨跌幅' }}</span></div>
+          <div v-for="sector in group.rows.slice(0, expanded ? undefined : 8)" :key="sector.sector_code" class="sector-row">
+            <div><span>{{ sector.sector_name }}</span><small>{{ rankText(sector.rank_change) }}</small></div>
+            <strong v-if="sectorMode === 'volume'">{{ formatVolume(sector.volume) }}</strong>
+            <strong v-else :class="changeClass(sector.change_pct)">{{ signed(sector.change_pct) }}%</strong>
           </div>
-          <div v-if="industrySectors.length > 0" class="stock-list">
-            <div
-              v-for="sector in industrySectors"
-              :key="sector.sector_code"
-              class="stock-item"
-            >
-              <div class="stock-main">
-                <span class="stock-code">{{ sector.sector_name }}</span>
-              </div>
-              <div class="stock-extra">
-                <span class="stock-change" :class="{ up: sector.change_pct > 0, down: sector.change_pct < 0 }">
-                  {{ sector.change_pct > 0 ? '+' : '' }}{{ sector.change_pct.toFixed(2) }}%
-                </span>
-                <span class="stock-total">{{ formatAmount(sector.volume) }}</span>
-              </div>
-            </div>
-          </div>
-          <div v-else-if="!sectorLoading" class="empty">暂无行业板块数据</div>
-        </section>
-
-        <section class="panel">
-          <div class="panel-header">
-            <h2>概念板块涨幅</h2>
-            <div class="sort-toggle">
-              <button
-                class="toggle-btn"
-                :class="{ active: conceptSortBy === 'change_pct' }"
-                @click="conceptSortBy = 'change_pct'"
-              >
-                涨跌幅
-              </button>
-              <button
-                class="toggle-btn"
-                :class="{ active: conceptSortBy === 'volume' }"
-                @click="conceptSortBy = 'volume'"
-              >
-                成交量
-              </button>
-            </div>
-          </div>
-          <div v-if="conceptSectors.length > 0" class="stock-list">
-            <div
-              v-for="sector in conceptSectors"
-              :key="sector.sector_code"
-              class="stock-item"
-            >
-              <div class="stock-main">
-                <span class="stock-code">{{ sector.sector_name }}</span>
-              </div>
-              <div class="stock-extra">
-                <span class="stock-change" :class="{ up: sector.change_pct > 0, down: sector.change_pct < 0 }">
-                  {{ sector.change_pct > 0 ? '+' : '' }}{{ sector.change_pct.toFixed(2) }}%
-                </span>
-                <span class="stock-total">{{ formatAmount(sector.volume) }}</span>
-              </div>
-            </div>
-          </div>
-          <div v-else-if="!sectorLoading" class="empty">暂无概念板块数据</div>
-        </section>
+          <p v-if="!group.rows.length" class="empty">{{ dashboard.sectors.industry.length || dashboard.sectors.concept.length ? '暂无符合条件的板块' : '所选日期暂无板块数据' }}</p>
+        </div>
       </div>
+      <button class="expand" @click="expanded = !expanded">{{ expanded ? '收起列表' : '展开全部板块' }}</button>
     </section>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
-import * as echarts from 'echarts'
+import { ref, computed } from 'vue'
 import IndexChartPopup from '../IndexChartPopup.vue'
-import { fetchMarketHistory, fetchTradeDates, syncDailyOverview, fetchSectorRankingDaily } from '../../api/client'
-import type {
-  MarketHistoryItem,
-  SectorDailyItem,
-  SectorRankingDaily,
-  MarketSummary,
-  IndexSpot,
-} from '../../api/client'
+import MarketTrendChart from './MarketTrendChart.vue'
+import { syncDailyOverview, syncReviewData, syncSectorRankingDaily } from '../../api/client'
+import type { OverviewDashboard, DashboardSector } from '../../api/client'
 
-const props = defineProps<{
-  marketSummary: MarketSummary
-  indices: IndexSpot[]
-  selectedDate: string
-  loading?: boolean
-}>()
-
-const emit = defineEmits<{
-  'update:selectedDate': [date: string]
-  refresh: []
-}>()
-
-const isToday = computed(() => props.selectedDate === formatDate(new Date()))
-
-function formatDate(d: Date): string {
-  const year = d.getFullYear()
-  const month = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-const tradeDates = ref<Set<string>>(new Set())
+const props = defineProps<{ dashboard: OverviewDashboard }>()
+const emit = defineEmits<{ refresh: [] }>()
+const current = computed(() => props.dashboard.current)
+const previous = computed(() => props.dashboard.previous)
+const shortTerm = computed(() => props.dashboard.short_term)
+const range = ref(20)
 const hoveredIndexCode = ref('')
-
-// 交易日加载后，若当前日期不是交易日，自动回退到最近的前一个交易日
-watch(tradeDates, (dates) => {
-  if (dates.size === 0 || !props.selectedDate) return
-  if (!dates.has(props.selectedDate)) {
-    const prev = findNearestTradeDate(props.selectedDate, 'prev')
-    if (prev && prev !== props.selectedDate) {
-      emit('update:selectedDate', prev)
-    }
-  }
-})
-
-async function loadTradeDates() {
-  try {
-    const end = formatDate(new Date())
-    const start = formatDate(new Date(Date.now() - 90 * 24 * 60 * 60 * 1000))
-    const dates = await fetchTradeDates(start, end)
-    tradeDates.value = new Set(dates)
-  } catch (err) {
-    console.error('Failed to load trade dates', err)
-  }
-}
-
-function findNearestTradeDate(target: string, direction: 'prev' | 'next'): string | null {
-  if (tradeDates.value.size === 0) return null
-  const sorted = Array.from(tradeDates.value).sort()
-  if (direction === 'prev') {
-    for (let i = sorted.length - 1; i >= 0; i--) {
-      if (sorted[i] < target) return sorted[i]
-    }
-  } else {
-    for (let i = 0; i < sorted.length; i++) {
-      if (sorted[i] > target) return sorted[i]
-    }
-  }
-  return null
-}
-
-function snapToTradeDate(target: string): string {
-  if (tradeDates.value.has(target)) return target
-  if (tradeDates.value.size === 0) return target
-  const sorted = Array.from(tradeDates.value).sort()
-  // 找最近的交易日
-  let nearest = sorted[0]
-  let minDiff = Infinity
-  const targetTime = new Date(target).getTime()
-  for (const d of sorted) {
-    const diff = Math.abs(new Date(d).getTime() - targetTime)
-    if (diff < minDiff) {
-      minDiff = diff
-      nearest = d
-    }
-  }
-  return nearest
-}
-
-function prevDay() {
-  const prev = findNearestTradeDate(props.selectedDate, 'prev')
-  if (prev) emit('update:selectedDate', prev)
-}
-
-function nextDay() {
-  const next = findNearestTradeDate(props.selectedDate, 'next')
-  if (next) emit('update:selectedDate', next)
-}
-
-function goToday() {
-  const today = formatDate(new Date())
-  emit('update:selectedDate', snapToTradeDate(today))
-}
-
-function onDateInputChange(e: Event) {
-  const target = e.target as HTMLInputElement
-  emit('update:selectedDate', snapToTradeDate(target.value))
-}
-
-const historyChart = ref<HTMLDivElement | null>(null)
-let chartInstance: echarts.ECharts | null = null
-
 const syncing = ref(false)
+const syncError = ref('')
+const expanded = ref(false)
+const sectorMode = ref<'up' | 'down' | 'volume'>('up')
+const sectorModes = [{ key: 'up' as const, label: '领涨' }, { key: 'down' as const, label: '领跌' }, { key: 'volume' as const, label: '成交量' }]
 
-const sectorRanking = ref<SectorRankingDaily>({
-  industry: [],
-  concept: [],
+function number(value: number | null | undefined) { return value == null ? '—' : value.toLocaleString('zh-CN') }
+function signed(value: number) { return `${value > 0 ? '+' : ''}${value.toFixed(2)}` }
+function percent(value: number | null | undefined, withSign = false) { return value == null ? '—' : `${withSign ? signed(value) : value.toFixed(1)}%` }
+function changeClass(value: number | null | undefined) { return value == null || value === 0 ? '' : value > 0 ? 'up' : 'down' }
+function formatAmount(value: number | null | undefined) { return value == null ? '—' : value >= 1e12 ? `${(value / 1e12).toFixed(2)} 万亿` : `${(value / 1e8).toFixed(0)} 亿` }
+function formatVolume(value: number) { return value >= 1e8 ? `${(value / 1e8).toFixed(2)} 亿手` : `${(value / 1e4).toFixed(1)} 万手` }
+function delta(value: number | null | undefined, old: number | null | undefined, unit: string) {
+  return value == null || old == null ? '暂无可比数据' : `较对比日 ${signed(value - old)}${unit}`
+}
+const turnoverChange = computed(() => {
+  const now = current.value?.total_turnover, old = previous.value?.total_turnover
+  return now == null || old == null || old <= 0 ? null : (now / old - 1) * 100
 })
-const sectorLoading = ref(false)
-const industrySortBy = ref<'change_pct' | 'volume'>('change_pct')
-const conceptSortBy = ref<'change_pct' | 'volume'>('change_pct')
-
-const chartStart = ref(formatDate(new Date(Date.now() - 6 * 24 * 60 * 60 * 1000)))
-const chartEnd = ref(formatDate(new Date()))
-const activeRange = ref('近一周')
-const marketHistory = ref<MarketHistoryItem[]>([])
-const historyNote = ref('')
-
-const quickRanges = [
-  { label: '近一周', days: 6 },
-  { label: '近一月', days: 29 },
-  { label: '近三月', days: 89 },
-]
-
-function setQuickRange(range: { label: string; days: number }) {
-  activeRange.value = range.label
-  const end = new Date()
-  const start = new Date(Date.now() - range.days * 24 * 60 * 60 * 1000)
-  chartEnd.value = formatDate(end)
-  chartStart.value = formatDate(start)
-  loadMarketHistory()
-}
-
-function initHistoryChart() {
-  if (!historyChart.value) return
-  chartInstance = echarts.init(historyChart.value)
-}
-
-function updateHistoryChart() {
-  if (!chartInstance || marketHistory.value.length === 0) return
-
-  const dates = marketHistory.value.map((item) => item.date)
-  const hasUpDown = marketHistory.value.some((item) => item.up > 0 || item.down > 0)
-
-  const series: echarts.SeriesOption[] = [
-    {
-      name: '涨停',
-      type: 'line',
-      data: marketHistory.value.map((item) => item.limit_up),
-      smooth: true,
-      itemStyle: { color: '#f97316' },
-      areaStyle: { opacity: 0.1 },
-    },
-    {
-      name: '跌停',
-      type: 'line',
-      data: marketHistory.value.map((item) => item.limit_down),
-      smooth: true,
-      itemStyle: { color: '#3b82f6' },
-      areaStyle: { opacity: 0.1 },
-    },
-    {
-      name: '炸板',
-      type: 'line',
-      data: marketHistory.value.map((item) => item.opened_limit),
-      smooth: true,
-      itemStyle: { color: '#a855f7' },
-      areaStyle: { opacity: 0.1 },
-    },
+const metrics = computed(() => {
+  const c = current.value, p = previous.value
+  const avg = props.dashboard.turnover_average
+  const avgNote = avg == null || c?.total_turnover == null ? '近期量能基准待补齐' : `相对前${props.dashboard.turnover_average_days}个有效交易日均量 ${signed((c.total_turnover / avg - 1) * 100)}%`
+  return [
+    { label: '上涨占比', value: percent(c?.up_ratio), comparison: delta(c?.up_ratio, p?.up_ratio, ' 个百分点'), note: `上涨 ${number(c?.up)} / 下跌 ${number(c?.down)} / 平盘 ${number(c?.flat)}`, tone: '' },
+    { label: '全市场成交额', value: formatAmount(c?.total_turnover), comparison: turnoverChange.value == null ? '暂无可比数据' : `较对比日 ${signed(turnoverChange.value)}%`, note: avgNote, tone: '' },
+    { label: '涨停家数', value: number(c?.limit_up), comparison: delta(c?.limit_up, p?.limit_up, ' 家'), note: '收盘涨停', tone: 'up' },
+    { label: '跌停家数', value: number(c?.limit_down), comparison: delta(c?.limit_down, p?.limit_down, ' 家'), note: '收盘跌停', tone: 'down' },
+    { label: '炸板率', value: percent(c?.break_rate), comparison: delta(c?.break_rate, p?.break_rate, ' 个百分点'), note: `炸板 ${number(c?.opened_limit)} /（涨停 + 炸板）`, tone: '' },
+    { label: '涨停延续率', value: percent(shortTerm.value.promote_rate), comparison: `对比日涨停 ${number(shortTerm.value.previous_count)} 家`, note: '前次涨停股中，今日仍涨停的比例', tone: '' },
   ]
-
-  if (hasUpDown) {
-    series.unshift(
-      {
-        name: '上涨家数',
-        type: 'line',
-        data: marketHistory.value.map((item) => item.up),
-        smooth: true,
-        itemStyle: { color: '#ef4444' },
-      },
-      {
-        name: '下跌家数',
-        type: 'line',
-        data: marketHistory.value.map((item) => item.down),
-        smooth: true,
-        itemStyle: { color: '#22c55e' },
-      }
-    )
-    historyNote.value = ''
-  } else {
-    historyNote.value = '提示：历史日期的上涨/下跌家数需要额外计算，当前折线图展示涨停、跌停、炸板数据。'
-  }
-
-  chartInstance.setOption({
-    backgroundColor: 'transparent',
-    tooltip: {
-      trigger: 'axis',
-      axisPointer: { type: 'cross' },
-    },
-    legend: {
-      data: series.map((s) => s.name as string),
-      textStyle: { color: '#9ca3af' },
-      bottom: 0,
-    },
-    grid: {
-      left: 50,
-      right: 20,
-      top: 20,
-      bottom: 40,
-    },
-    xAxis: {
-      type: 'category',
-      data: dates,
-      axisLine: { lineStyle: { color: '#374151' } },
-      axisLabel: { color: '#9ca3af' },
-    },
-    yAxis: {
-      type: 'value',
-      axisLine: { lineStyle: { color: '#374151' } },
-      axisLabel: { color: '#9ca3af' },
-      splitLine: { lineStyle: { color: '#374151' } },
-    },
-    series,
-  })
+})
+const summaryLines = computed(() => {
+  const c = current.value, p = previous.value
+  if (!c) return []
+  const lines = []
+  if (c.up_ratio != null) lines.push(`市场广度：${c.up_ratio.toFixed(1)}% 的交易股票上涨${p?.up_ratio != null ? `，较 ${p.date} ${c.up_ratio >= p.up_ratio ? '扩大' : '收窄'} ${Math.abs(c.up_ratio - p.up_ratio).toFixed(1)} 个百分点` : ''}。`)
+  if (c.total_turnover != null) lines.push(`量能：成交 ${formatAmount(c.total_turnover)}${turnoverChange.value != null ? `，较对比日${turnoverChange.value >= 0 ? '增加' : '减少'} ${Math.abs(turnoverChange.value).toFixed(1)}%` : ''}。`)
+  lines.push(`短线情绪：涨停 ${c.limit_up} 家、跌停 ${c.limit_down} 家${c.break_rate != null ? `，炸板率 ${c.break_rate.toFixed(1)}%` : ''}${p?.break_rate != null && c.break_rate != null ? `（较对比日${c.break_rate >= p.break_rate ? '上升' : '下降'} ${Math.abs(c.break_rate - p.break_rate).toFixed(1)} 个百分点）` : ''}。`)
+  return lines
+})
+function sortSectors(rows: DashboardSector[]) {
+  if (sectorMode.value === 'volume') return [...rows].sort((a, b) => b.volume - a.volume)
+  return rows.filter(r => sectorMode.value === 'up' ? r.change_pct > 0 : r.change_pct < 0)
+    .sort((a, b) => sectorMode.value === 'up' ? b.change_pct - a.change_pct : a.change_pct - b.change_pct)
 }
-
-async function loadMarketHistory() {
-  try {
-    const data = await fetchMarketHistory(chartStart.value, chartEnd.value)
-    marketHistory.value = data
-    updateHistoryChart()
-  } catch (err) {
-    console.error('Failed to load market history', err)
-  }
-}
-
-async function syncToday() {
-  if (syncing.value) return
+const sectorGroups = computed(() => [
+  { label: '行业板块', rows: sortSectors(props.dashboard.sectors.industry) },
+  { label: '概念板块', rows: sortSectors(props.dashboard.sectors.concept) },
+])
+function rankText(value: number | null) { return value == null ? '暂无可比排名' : value === 0 ? '涨幅排名持平' : `涨幅排名${value > 0 ? '上升' : '下降'} ${Math.abs(value)} 位` }
+async function syncData() {
   syncing.value = true
-  try {
-    await syncDailyOverview(props.selectedDate)
-    emit('refresh')
-  } catch (err: any) {
-    console.error('Failed to sync daily overview', err)
-  } finally {
-    syncing.value = false
-  }
-}
-
-async function loadSectorRanking() {
-  sectorLoading.value = true
-  try {
-    sectorRanking.value = await fetchSectorRankingDaily(props.selectedDate, 'all', 'change_pct', 50)
-  } catch (err: any) {
-    console.error('Failed to load sector ranking', err)
-  } finally {
-    sectorLoading.value = false
-  }
-}
-
-function sortSectors(list: SectorDailyItem[], sortBy: 'change_pct' | 'volume'): SectorDailyItem[] {
-  return [...list].sort((a, b) => b[sortBy] - a[sortBy])
-}
-
-const industrySectors = computed(() =>
-  sortSectors(sectorRanking.value.industry, industrySortBy.value)
-)
-const conceptSectors = computed(() =>
-  sortSectors(sectorRanking.value.concept, conceptSortBy.value)
-)
-
-function handleResize() {
-  chartInstance?.resize()
-}
-
-onMounted(() => {
-  initHistoryChart()
-  loadMarketHistory()
-  loadTradeDates()
-  loadSectorRanking()
-  window.addEventListener('resize', handleResize)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('resize', handleResize)
-  chartInstance?.dispose()
-})
-
-watch(
-  () => [chartStart.value, chartEnd.value],
-  () => {
-    activeRange.value = '自定义'
-  }
-)
-
-watch(
-  () => props.selectedDate,
-  () => {
-    loadSectorRanking()
-  }
-)
-
-function formatAmount(amount: number): string {
-  const absAmount = Math.abs(amount)
-  if (absAmount >= 1e12) {
-    return (absAmount / 1e12).toFixed(2) + '万亿'
-  }
-  if (absAmount >= 1e8) {
-    return (absAmount / 1e8).toFixed(2) + '亿'
-  }
-  if (absAmount >= 1e4) {
-    return (absAmount / 1e4).toFixed(2) + '万'
-  }
-  return absAmount.toFixed(0)
+  syncError.value = ''
+  const date = props.dashboard.date
+  const results = await Promise.allSettled([syncDailyOverview(date), syncReviewData(date), syncSectorRankingDaily(date)])
+  syncing.value = false
+  if (results.some(r => r.status === 'rejected')) syncError.value = '部分数据同步失败，请稍后重试；刷新可查看已入库部分。'
+  else emit('refresh')
 }
 </script>
 
 <style scoped>
-.daily-tab {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-}
-
-.date-bar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-  background: #1f2937;
-  border-radius: 10px;
-  padding: 14px 18px;
-}
-
-.date-info {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.date-controls {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.nav-btn,
-.today-btn,
-.sync-btn {
-  padding: 6px 12px;
-  border-radius: 6px;
-  border: 1px solid #374151;
-  background: #111827;
-  color: #e5e7eb;
-  font-size: 13px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.nav-btn:hover,
-.today-btn:hover,
-.sync-btn:hover {
-  background: #1f2937;
-}
-
-.sync-btn {
-  background: #1e3a8a;
-  border-color: #1e40af;
-  color: #bfdbfe;
-}
-
-.sync-btn:hover {
-  background: #1e40af;
-  color: #fff;
-}
-
-.sync-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.date-input {
-  padding: 6px 10px;
-  border-radius: 6px;
-  border: 1px solid #374151;
-  background: #111827;
-  color: #e5e7eb;
-  font-size: 14px;
-}
-
-.date-note {
-  font-size: 13px;
-  color: #6b7280;
-}
-
-.loading-text {
-  font-size: 13px;
-  color: #6b7280;
-}
-
-.indices-section {
-  margin-bottom: 0;
-}
-
-.section-title {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-
-.section-title h2 {
-  font-size: 16px;
-  font-weight: 600;
-  color: #e5e7eb;
-  margin: 0;
-}
-
-.history-note {
-  font-size: 12px;
-  color: #6b7280;
-}
-
-.empty-panel {
-  background: #1f2937;
-  border-radius: 10px;
-  padding: 30px;
-  text-align: center;
-  color: #6b7280;
-  font-size: 14px;
-}
-
-.indices-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 14px;
-}
-
-.index-card {
-  position: relative;
-  background: #1f2937;
-  border-radius: 10px;
-  padding: 18px;
-}
-
-.index-chart-popup {
-  position: absolute;
-  top: 0;
-  left: calc(100% + 12px);
-  z-index: 100;
-}
-
-.index-card.up {
-  border: 1px solid rgba(239, 68, 68, 0.3);
-}
-
-.index-card.down {
-  border: 1px solid rgba(34, 197, 94, 0.3);
-}
-
-.index-name {
-  font-size: 14px;
-  color: #9ca3af;
-  margin-bottom: 8px;
-}
-
-.index-price {
-  font-size: 24px;
-  font-weight: 700;
-  color: #fff;
-  margin-bottom: 8px;
-}
-
-.index-change {
-  display: flex;
-  gap: 12px;
-  font-size: 14px;
-}
-
-.index-card.up .index-change {
-  color: #ef4444;
-}
-
-.index-card.down .index-change {
-  color: #22c55e;
-}
-
-.stats-chart-row {
-  display: grid;
-  grid-template-columns: minmax(320px, 420px) 1fr;
-  gap: 20px;
-}
-
-.stats-section {
-  background: #1f2937;
-  border-radius: 10px;
-  padding: 20px;
-}
-
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 14px;
-}
-
-.stat-card {
-  background: #111827;
-  border-radius: 10px;
-  padding: 16px;
-  border-left: 4px solid #374151;
-}
-
-.stat-card.up {
-  border-left-color: #ef4444;
-}
-
-.stat-card.down {
-  border-left-color: #22c55e;
-}
-
-.stat-card.flat {
-  border-left-color: #6b7280;
-}
-
-.stat-card.limit-up {
-  border-left-color: #f97316;
-}
-
-.stat-card.limit-down {
-  border-left-color: #3b82f6;
-}
-
-.stat-card.opened-limit {
-  border-left-color: #a855f7;
-}
-
-.stat-card.total {
-  border-left-color: #6b7280;
-}
-
-.stat-card.up-down {
-  border-left-color: #ef4444;
-}
-
-.stat-card.up-down .stat-value {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.stat-card.up-down .up-count {
-  color: #ef4444;
-}
-
-.stat-card.up-down .down-count {
-  color: #22c55e;
-}
-
-.stat-card.up-down .separator {
-  color: #6b7280;
-  font-weight: 400;
-}
-
-.stat-card.turnover {
-  border-left-color: #f59e0b;
-}
-
-.stat-label {
-  font-size: 13px;
-  color: #9ca3af;
-  margin-bottom: 8px;
-}
-
-.stat-value {
-  font-size: 24px;
-  font-weight: 700;
-  color: #fff;
-}
-
-.chart-section {
-  background: #1f2937;
-  border-radius: 10px;
-  padding: 20px;
-  min-width: 0;
-}
-
-.chart-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-
-.chart-header h2 {
-  font-size: 16px;
-  font-weight: 600;
-  color: #e5e7eb;
-  margin: 0;
-}
-
-.chart-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.range-btn {
-  padding: 5px 12px;
-  border-radius: 4px;
-  border: 1px solid #374151;
-  background: transparent;
-  color: #9ca3af;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.range-btn.active,
-.range-btn:hover {
-  background: #2563eb;
-  border-color: #2563eb;
-  color: #fff;
-}
-
-.chart-controls input[type='date'] {
-  padding: 5px 8px;
-  font-size: 13px;
-}
-
-.range-separator {
-  color: #9ca3af;
-  font-size: 13px;
-}
-
-.btn-primary {
-  padding: 5px 14px;
-  border-radius: 4px;
-  border: 1px solid #2563eb;
-  background: #2563eb;
-  color: #fff;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.btn-primary:hover {
-  background: #1d4ed8;
-}
-
-.history-chart {
-  width: 100%;
-  height: 280px;
-}
-
-.history-note {
-  margin-top: 10px;
-  font-size: 12px;
-  color: #6b7280;
-}
-
-.sector-ranking-section {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.sector-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
-  gap: 20px;
-}
-
-.sort-toggle {
-  display: flex;
-  gap: 6px;
-}
-
-.toggle-btn {
-  padding: 5px 12px;
-  border-radius: 4px;
-  border: 1px solid #374151;
-  background: #111827;
-  color: #9ca3af;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.toggle-btn:hover {
-  background: #1f2937;
-  color: #e5e7eb;
-}
-
-.toggle-btn.active {
-  background: #2563eb;
-  border-color: #2563eb;
-  color: #fff;
-}
-
-.panel {
-  background: #1f2937;
-  border-radius: 10px;
-  padding: 18px;
-}
-
-.panel-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 14px;
-}
-
-.panel-header h2 {
-  font-size: 16px;
-  font-weight: 600;
-  color: #e5e7eb;
-  margin: 0;
-}
-
-.panel-more {
-  font-size: 13px;
-  color: #60a5fa;
-  text-decoration: none;
-}
-
-.stock-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.stock-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 12px;
-  border-radius: 6px;
-  background: #111827;
-  text-decoration: none;
-  transition: background 0.2s;
-}
-
-.stock-item:hover {
-  background: #1a2230;
-}
-
-.stock-main {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-
-.stock-code {
-  font-weight: 600;
-  color: #fff;
-  font-size: 14px;
-  min-width: 70px;
-}
-
-.stock-name {
-  color: #9ca3af;
-  font-size: 13px;
-}
-
-.stock-meta {
-  font-size: 12px;
-  color: #6b7280;
-  background: #1f2937;
-  padding: 2px 8px;
-  border-radius: 4px;
-}
-
-.empty {
-  color: #6b7280;
-  font-size: 13px;
-  text-align: center;
-  padding: 30px 0;
-}
-
-.empty a {
-  color: #60a5fa;
-  text-decoration: none;
-}
-
-@media (max-width: 1200px) {
-  .index-chart-popup {
-    top: calc(100% + 12px);
-    left: 0;
-  }
-}
-
-@media (max-width: 900px) {
-  .stats-chart-row {
-    grid-template-columns: 1fr;
-  }
-}
+.daily-tab { display:flex; flex-direction:column; gap:24px; }
+.panel { background:#111827; border:1px solid #253045; border-radius:12px; padding:24px; }
+.panel-header { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:16px; }
+h2 { margin:0 0 6px; font-size:16px; color:#e5e7eb; } h3 { font-size:14px; font-weight:500; }
+p { color:#d1d5db; font-size:14px; line-height:1.8; margin:6px 0; }
+small,.muted { color:#9ca3af; font-size:12px; font-weight:400; }
+button { border:1px solid #374151; border-radius:6px; padding:6px 12px; color:#d1d5db; background:#111827; cursor:pointer; }
+button:disabled { opacity:.5; } .toggle { display:flex; gap:6px; } .toggle .active { background:#2563eb; border-color:#2563eb; color:white; }
+a { color:#60a5fa; text-decoration:none; font-size:13px; } a:hover { color:#93c5fd; }
+.summary { border-left:3px solid #60a5fa; background:linear-gradient(110deg,#152239,#111827 75%); }.summary p { line-height:1.9; font-size:14px; }
+.metrics-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
+.metric-card { background:linear-gradient(160deg,#162033,#111827); border:1px solid #253045; border-radius:10px; padding:20px 18px; }
+.label,.comparison { color:#9ca3af; font-size:12px; }
+.metric-card strong { display:block; color:#fff; font-size:28px; letter-spacing:-.5px; margin:16px 0; }
+.metric-card small { display:block; margin-top:8px; line-height:1.6; }
+.comparison { color:#d1d5db; }
+.indices-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; }
+.index-card { background:#111827; padding:14px; border-radius:8px; position:relative; display:flex; flex-wrap:wrap; gap:8px 14px; align-items:baseline; }
+.index-card>span { width:100%; color:#9ca3af; font-size:12px; }.index-card>strong { font-size:20px; color:#e5e7eb; }.index-card>b { font-size:13px; }
+.index-card :deep(.index-chart-popup) { position:absolute; top:100%; left:0; z-index:20; }
+.structure-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:16px; }
+.structure-grid>div { background:#111827; padding:16px; border-radius:6px; }.structure-grid span { color:#9ca3af; font-size:12px; }.structure-grid strong { display:block; margin:12px 0; font-size:22px; color:#e5e7eb; }
+.leaders { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:16px; font-size:12px; color:#9ca3af; }.leaders a { padding:6px 10px; background:#111827; border-radius:4px; }
+.sector-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:24px; }.sector-head,.sector-row { display:flex; justify-content:space-between; gap:16px; padding:10px 12px; font-size:13px; }.sector-head { color:#9ca3af; font-size:12px; }.sector-row { background:#111827; border-radius:6px; margin-bottom:6px; align-items:center; }.sector-row span { color:#e5e7eb; }.sector-row small { display:block; margin-top:5px; }.sector-row strong { white-space:nowrap; font-size:14px; }
+.expand { display:block; margin:16px auto 0; }.empty { text-align:center; padding:24px; color:#9ca3af; font-size:13px; }.notice { color:#fbbf24; font-size:12px; }.error { color:#fca5a5; }
+.up,.metric-card strong.up,.structure-grid strong.up { color:#ef4444; }.down,.metric-card strong.down,.structure-grid strong.down { color:#22c55e; }
+@media(max-width:800px) { .sector-grid { grid-template-columns:1fr; }.metrics-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }.panel { padding:16px; } }
 </style>

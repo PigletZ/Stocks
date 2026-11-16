@@ -3,7 +3,6 @@
     <div class="tab-header">
       <h2>龙虎榜</h2>
       <div class="header-controls">
-        <input type="date" v-model="selectedDate" @change="onDateChange" />
         <div class="sort-toggle">
           <button
             class="toggle-btn"
@@ -24,6 +23,7 @@
       </div>
     </div>
 
+    <p v-if="error" class="error-message" role="alert">{{ error }}</p>
     <div v-if="items.length > 0" class="table-container">
       <table class="stock-table">
         <thead>
@@ -75,6 +75,8 @@ import { ref, onMounted, computed } from 'vue'
 import { fetchDragonTiger } from '../../api/client'
 import type { DragonTigerItem } from '../../api/client'
 
+const props = defineProps<{ tradeDate: string }>()
+
 defineEmits<{
   'add-watchlist': [code: string]
 }>()
@@ -84,7 +86,9 @@ type SortField = 'change_pct' | 'net_amount' | 'trade_date'
 const items = ref<DragonTigerItem[]>([])
 const total = ref(0)
 const loading = ref(false)
-const selectedDate = ref(new Date().toISOString().split('T')[0])
+const error = ref('')
+let requestId = 0
+const selectedDate = computed(() => props.tradeDate)
 const sortBy = ref<SortField>('net_amount')
 const order = ref<'asc' | 'desc'>('desc')
 const page = ref(1)
@@ -95,7 +99,9 @@ const hasPrev = computed(() => page.value > 1)
 const hasNext = computed(() => page.value < totalPages.value)
 
 async function loadData() {
+  const request = ++requestId
   loading.value = true
+  error.value = ''
   try {
     const offset = (page.value - 1) * pageSize.value
     const res = await fetchDragonTiger(
@@ -105,12 +111,14 @@ async function loadData() {
       offset,
       pageSize.value,
     )
+    if (request !== requestId) return
     items.value = res.items
     total.value = res.total
   } catch (err) {
+    if (request === requestId) error.value = '龙虎榜加载失败，请稍后重试。'
     console.error('Failed to load dragon-tiger list', err)
   } finally {
-    loading.value = false
+    if (request === requestId) loading.value = false
   }
 }
 
@@ -139,11 +147,6 @@ function nextPage() {
   }
 }
 
-function onDateChange() {
-  page.value = 1
-  loadData()
-}
-
 function formatAmount(amount: number): string {
   const sign = amount < 0 ? '-' : ''
   const absAmount = Math.abs(amount)
@@ -165,6 +168,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.error-message { color:#fca5a5; font-size:13px; }
 .dragon-tiger-tab {
   background: #1f2937;
   border-radius: 10px;

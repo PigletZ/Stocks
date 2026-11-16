@@ -293,7 +293,7 @@ class OverviewService:
         d = target_date or date.today()
         df = self._fetch_limit_list_for_date(d)
         if df is None or df.empty:
-            should_fallback = target_date is None or d == date.today()
+            should_fallback = target_date is None
             if should_fallback:
                 prev_date = self._get_previous_trade_date(d)
                 if prev_date:
@@ -390,7 +390,7 @@ class OverviewService:
         effective_date = d
         df = self._fetch_top_list_for_date(d)
         if df is None or df.empty:
-            should_fallback = target_date is None or d == date.today()
+            should_fallback = target_date is None
             if should_fallback:
                 prev_date = self._get_previous_trade_date(d)
                 if prev_date:

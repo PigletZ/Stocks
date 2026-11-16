@@ -112,6 +112,7 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   fetchLimitLadder,
   fetchLimitPerformance,
@@ -121,7 +122,8 @@ import {
 } from '../api/client'
 import PigletStockDetailPopup from '../components/strategy/PigletStockDetailPopup.vue'
 
-const selectedDate = ref('')
+const route = useRoute()
+const selectedDate = ref(typeof route.query.date === 'string' ? route.query.date : '')
 const loading = ref(false)
 const syncing = ref(false)
 const error = ref('')

@@ -233,6 +233,58 @@ export interface DailyOverview {
   market_stats: MarketSummary
 }
 
+export interface DashboardSnapshot {
+  date: string
+  up: number | null
+  down: number | null
+  flat: number | null
+  total: number | null
+  up_ratio: number | null
+  total_turnover: number | null
+  limit_up: number
+  limit_down: number
+  opened_limit: number
+  break_rate: number | null
+}
+
+export interface DashboardSector extends SectorDailyItem {
+  rank: number
+  rank_change: number | null
+}
+
+export interface OverviewDashboard {
+  date: string
+  latest_date: string | null
+  available_dates: string[]
+  status: 'ready' | 'partial' | 'missing'
+  updated_at: string | null
+  current: DashboardSnapshot | null
+  previous: DashboardSnapshot | null
+  history: DashboardSnapshot[]
+  turnover_average: number | null
+  turnover_average_days: number
+  indices: IndexSpot[]
+  short_term: {
+    ready: boolean
+    first_board: number | null
+    second_board: number | null
+    higher_board: number | null
+    max_board: number | null
+    leaders: { code: string; name: string; boards: number }[]
+    previous_count: number | null
+    promoted: number | null
+    promote_rate: number | null
+    avg_pct: number | null
+    quote_samples: number
+  }
+  sectors: { industry: DashboardSector[]; concept: DashboardSector[] }
+}
+
+export async function fetchOverviewDashboard(date?: string, signal?: AbortSignal): Promise<OverviewDashboard> {
+  const { data } = await api.get('/overview/dashboard', { params: { date }, signal })
+  return data
+}
+
 export async function fetchDailyOverview(date?: string): Promise<DailyOverview> {
   const { data } = await api.get('/overview/daily-overview', {
     params: date ? { date } : undefined,

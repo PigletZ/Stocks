@@ -1,13 +1,22 @@
 from datetime import datetime, date, timedelta
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 from typing import List, Optional
 
 from ..database import get_session
-from ..models import IndexDaily, MarketDailyStat, RecentView, Stock, WatchlistItem
+from ..services.dashboard_service import DashboardService
+from ..models import IndexDaily, RecentView, Stock, WatchlistItem
 from ..services.overview_service import OverviewService
 
 router = APIRouter()
+
+
+@router.get("/dashboard")
+def get_dashboard(
+    target_date: Optional[date] = Query(None, alias="date", description="收盘数据日期，默认最近入库交易日"),
+    session: Session = Depends(get_session),
+):
+    return DashboardService().get_dashboard(target_date, session)
 
 
 def _parse_date(d: Optional[str]) -> date:
@@ -59,30 +68,12 @@ def sync_daily_overview(
     date: Optional[str] = Query(None, description="日期 YYYY-MM-DD，默认今天"),
     session: Session = Depends(get_session),
 ):
-    """手动同步指定日期的日概览数据（指数 + 市场统计），会覆盖已有缓存"""
+    """新数据齐备后才覆盖原缓存，同步失败保留旧数据。"""
     target_date = _parse_date(date)
-
-    cached_indices = session.exec(
-        select(IndexDaily).where(IndexDaily.trade_date == target_date)
-    ).all()
-    for row in cached_indices:
-        session.delete(row)
-
-    cached_stat = session.exec(
-        select(MarketDailyStat).where(MarketDailyStat.stat_date == target_date)
-    ).first()
-    if cached_stat:
-        session.delete(cached_stat)
-
-    session.commit()
-
-    service = OverviewService()
-    result = service.fetch_daily_overview(target_date, session)
-    return {
-        "date": target_date.isoformat(),
-        "indices_count": len(result.get("indices", [])),
-        "market_stats": result.get("market_stats", {}),
-    }
+    try:
+        return DashboardService.sync_daily(target_date, session)
+    except ValueError as error:
+        raise HTTPException(status_code=503, detail=str(error))
 
 
 @router.get("/trade-dates")
