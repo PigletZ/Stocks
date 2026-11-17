@@ -1,6 +1,7 @@
 <template>
   <div class="radar-chart panel">
     <h3>五维对比（相对归一化）</h3>
+    <p v-if="!radar.series.some(s => s.values.every(v => v != null))">暂无五维数据齐备的股票，请查看指标明细。</p>
     <div ref="chartEl" class="chart"></div>
   </div>
 </template>
@@ -10,7 +11,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
 
 const props = defineProps<{
-  radar: { dims: string[]; series: { name: string; values: number[] }[] }
+  radar: { dims: string[]; series: { name: string; values: (number | null)[] }[] }
 }>()
 
 const chartEl = ref<HTMLElement | null>(null)
@@ -43,7 +44,7 @@ function render() {
     series: [
       {
         type: 'radar',
-        data: props.radar.series.map((s) => ({
+        data: props.radar.series.filter(s => s.values.every(v => v != null)).map((s) => ({
           name: s.name,
           value: s.values,
           areaStyle: { opacity: 0.08 },

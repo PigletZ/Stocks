@@ -685,6 +685,7 @@ export async function fetchStockDailyHistory(
 // ==================== 财务分析 ====================
 
 export interface FinMetrics {
+  net_profit_state?: string
   revenue?: number | null
   revenue_yoy?: number | null
   net_profit?: number | null
@@ -709,6 +710,7 @@ export interface FinTag {
 }
 
 export interface FinStockCompare {
+  tags_by_period?: Record<string, FinTag[]>
   code: string
   name: string
   industry?: string | null
@@ -720,7 +722,7 @@ export interface FinStockCompare {
 
 export interface FinRadarSeries {
   name: string
-  values: number[]
+  values: (number | null)[]
 }
 
 export interface FinCompareResult {
@@ -761,7 +763,7 @@ export interface FinHighlightItem {
   good_count: number
   risk_count: number
   tags: FinTag[]
-  metrics: FinMetrics
+  metrics: FinMetrics & { period?: string }
 }
 
 export interface FinHighlightRank {

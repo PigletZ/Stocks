@@ -4,9 +4,7 @@
       <h3>指标对比</h3>
       <div class="ct-period">
         <label>报告期</label>
-        <select v-model="selectedPeriod">
-          <option v-for="p in periods" :key="p" :value="p">{{ p }}</option>
-        </select>
+        <span>{{ period }}</span>
       </div>
     </div>
     <div class="ct-scroll">
@@ -41,17 +39,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import type { FinMetrics, FinStockCompare } from '../../api/client'
 
 interface MetricDef {
-  key: keyof FinMetrics
+  key: Exclude<keyof FinMetrics, 'net_profit_state'>
   label: string
   format: 'pct' | 'yi' | 'times' | 'ratio'
   lowerBetter?: boolean
 }
 
-const props = defineProps<{ stocks: FinStockCompare[] }>()
+const props = defineProps<{ stocks: FinStockCompare[]; period: string }>()
 
 const groups: { name: string; metrics: MetricDef[] }[] = [
   {
@@ -105,22 +103,7 @@ const groups: { name: string; metrics: MetricDef[] }[] = [
 ]
 
 // 所有股票展示期的并集（新→旧）
-const periods = computed(() => {
-  const set = new Set<string>()
-  props.stocks.forEach((s) => s.periods.forEach((p) => set.add(p)))
-  return Array.from(set).sort().reverse()
-})
-
-const selectedPeriod = ref('')
-watch(
-  periods,
-  (ps) => {
-    if (!selectedPeriod.value || !ps.includes(selectedPeriod.value)) {
-      selectedPeriod.value = ps[0] || ''
-    }
-  },
-  { immediate: true }
-)
+const selectedPeriod = computed(() => props.period)
 
 const collapsed = ref(new Set<string>())
 function toggle(name: string) {

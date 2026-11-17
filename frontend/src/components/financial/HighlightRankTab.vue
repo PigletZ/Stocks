@@ -8,7 +8,10 @@
         <option :value="300">前 300</option>
       </select>
       <span v-if="rankDate" class="hr-date">榜单日期：{{ rankDate }}</span>
+      <select v-model="industry"><option value="">所有行业</option><option v-for="value in industries" :key="value" :value="value">{{ value }}</option></select>
     </div>
+    <p class="explanation">按亮点数降序、风险数升序，再按 ROE 和营收同比排序。标签可能重叠，不是综合财务评分；行业筛选仅作用于当前加载的榜单。</p>
+    <p v-if="error" class="explanation" role="alert">{{ error }}</p>
 
     <div v-if="loading" class="hr-hint">加载中…</div>
     <div v-else-if="!items.length" class="hr-hint">暂无榜单数据（等待每日 19:00 增量任务算榜）</div>
@@ -20,6 +23,7 @@
             <th>代码</th>
             <th>名称</th>
             <th>行业</th>
+            <th>报告期</th>
             <th class="num">亮点</th>
             <th class="num">风险</th>
             <th>标签</th>
@@ -30,11 +34,12 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="it in items" :key="it.code">
+          <tr v-for="it in filteredItems" :key="it.code">
             <td class="rank" :class="{ top3: it.rank <= 3 }">{{ it.rank }}</td>
             <td class="code">{{ it.code }}</td>
             <td class="name">{{ it.name }}</td>
             <td class="industry">{{ it.industry || '-' }}</td>
+            <td>{{ it.metrics.period || '历史榜未记录' }}</td>
             <td class="num good">{{ it.good_count }}</td>
             <td class="num" :class="{ risk: it.risk_count > 0 }">{{ it.risk_count }}</td>
             <td class="tags">
@@ -61,7 +66,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { fetchFinancialHighlightRank, type FinHighlightItem } from '../../api/client'
 
 defineEmits<{ (e: 'compare', stock: { code: string; name: string }): void }>()
@@ -69,14 +74,22 @@ defineEmits<{ (e: 'compare', stock: { code: string; name: string }): void }>()
 const items = ref<FinHighlightItem[]>([])
 const rankDate = ref<string | null>(null)
 const loading = ref(true)
+const error = ref('')
+const industry = ref('')
+const industries = computed(() => [...new Set(items.value.map(s => s.industry).filter((s): s is string => !!s))].sort())
+const filteredItems = computed(() => items.value.filter(s => !industry.value || s.industry === industry.value))
 const limit = ref(100)
 
 async function load() {
   loading.value = true
+  error.value = ''
   try {
     const res = await fetchFinancialHighlightRank(limit.value)
     items.value = res.items
     rankDate.value = res.date
+    if (!industries.value.includes(industry.value)) industry.value = ''
+  } catch {
+    error.value = '榜单加载失败，请重试。'
   } finally {
     loading.value = false
   }
@@ -97,6 +110,7 @@ function cls(v?: number | null): string {
 </script>
 
 <style scoped>
+.explanation { color:#9ca3af; font-size:12px; line-height:1.8; }
 .panel {
   background: #111827;
   border: 1px solid #1f2937;

@@ -263,6 +263,20 @@ class FinancialService:
         return cur / base - 1
 
     @staticmethod
+    def _profit_state(cur, base):
+        if cur is None:
+            return "数据缺失"
+        if base is None:
+            return "缺少同期数据"
+        if base < 0:
+            return "扭亏为盈" if cur > 0 else "亏损收窄" if cur > base else "亏损扩大" if cur < base else "亏损持平"
+        if base == 0:
+            return "由盈亏平衡转为盈利" if cur > 0 else "由盈亏平衡转为亏损" if cur < 0 else "盈亏平衡"
+        if cur < 0:
+            return "由盈转亏"
+        return "利润增长" if cur > base else "利润下降" if cur < base else "利润持平"
+
+    @staticmethod
     def _prev_year_end(end: date) -> Optional[date]:
         """上一年度期末（用于平均余额的期初取值）"""
         try:
@@ -314,7 +328,7 @@ class FinancialService:
             current_ratio = (
                 self._safe_div(bal.total_cur_assets, bal.total_cur_liab) if bal else None
             )
-            ncf_ratio = self._safe_div(ncf, net_profit) if ncf is not None and net_profit else None
+            ncf_ratio = self._safe_div(ncf, net_profit) if ncf is not None and net_profit is not None and net_profit > 0 else None
 
             def _avg(cur_v, py_v):
                 if cur_v is None:
@@ -336,6 +350,7 @@ class FinancialService:
                 "revenue_yoy": self._yoy(total_revenue, inc_ly.total_revenue if inc_ly else None),
                 "net_profit": net_profit,
                 "net_profit_yoy": self._yoy(net_profit, inc_ly.n_income_attr_p if inc_ly else None),
+                "net_profit_state": self._profit_state(net_profit, inc_ly.n_income_attr_p if inc_ly else None),
                 "gross_margin": gross_margin,
                 "gross_margin_ly": gm_ly,
                 "net_margin": net_margin,
@@ -422,7 +437,7 @@ class FinancialService:
             "盈利能力": ["gross_margin", "net_margin", "roe_annualized"],
             "成长能力": ["revenue_yoy", "net_profit_yoy"],
             "偿债能力": ["debt_ratio", "current_ratio"],
-            "现金流质量": ["ncf", "ncf_ratio"],
+            "现金流质量": ["ncf_ratio"],
             "运营效率": ["inv_turnover", "ar_turnover", "asset_turnover"],
         }
         n = len(stocks_metrics)
@@ -454,7 +469,7 @@ class FinancialService:
             values = []
             for dim, ms in groups.items():
                 dim_vals = [norm[m][i] for m in ms if norm.get(m) and norm[m][i] is not None]
-                values.append(round(sum(dim_vals) / len(dim_vals), 1) if dim_vals else 0.0)
+                values.append(round(sum(dim_vals) / len(dim_vals), 1) if dim_vals else None)
             series.append({"name": f"{name}({code})", "values": values})
         return {"dims": list(groups.keys()), "series": series}
 
@@ -484,6 +499,7 @@ class FinancialService:
                 "metrics": metrics,
                 "card": card,
                 "tags": tags,
+                "tags_by_period": {p.isoformat(): self._build_tags(metrics, [d for d in display_periods if d <= p]) for p in display_periods},
             })
             if latest_key and metrics.get(latest_key):
                 radar_input.append((code, stock.name if stock else code, metrics[latest_key]))
@@ -600,7 +616,7 @@ class FinancialService:
                 "risk_count": sum(1 for t in tags if t["type"] == "risk"),
                 "roe": latest.get("roe_annualized"),
                 "rev_yoy": latest.get("revenue_yoy"),
-                "metrics": latest,
+                "metrics": {**latest, "period": display_periods[-1].isoformat()},
             })
 
         def _key(item):

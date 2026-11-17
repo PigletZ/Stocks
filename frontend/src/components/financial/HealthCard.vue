@@ -1,159 +1,35 @@
 <template>
-  <div class="health-card">
-    <div class="hc-header">
-      <span class="hc-name">{{ stock.name }}</span>
-      <span class="hc-code">{{ stock.code }}</span>
-      <span class="hc-period">{{ stock.card.period || '' }}</span>
+  <article class="card">
+    <header><div><h2>{{ stock.name }} <small>{{ stock.code }}</small></h2><span>{{ stock.industry || '行业未知' }} · {{ stock.card.period }}</span></div></header>
+    <div class="story"><p v-for="line in story" :key="line">{{ line }}</p></div>
+    <div class="grid">
+      <section><span>01 / 盈利表现</span><strong>{{ money(c.net_profit) }}</strong><p>归母净利润 · {{ c.net_profit_state || '缺少同期数据' }}</p><small>净利率 {{ pct(c.net_margin) }} · 毛利率 {{ pct(c.gross_margin) }}</small></section>
+      <section><span>02 / 增长变化</span><strong>{{ pct(c.revenue_yoy,true) }}</strong><p>营业总收入同比 · 收入 {{ money(c.revenue) }}</p><small>净利润同比 {{ pct(c.net_profit_yoy,true) }}<template v-if="c.net_profit_yoy == null">（{{ c.net_profit_state || '不可比' }}）</template></small></section>
+      <section><span>03 / 现金支撑</span><strong>{{ money(c.ncf) }}</strong><p>经营活动现金流净额</p><small>净现比 {{ ratio(c.ncf_ratio) }}<template v-if="c.net_profit == null || c.net_profit <= 0"> · 净利润非正或缺失时不计算</template></small></section>
+      <section><span>04 / 负债状况</span><strong>{{ pct(c.debt_ratio) }}</strong><p>资产负债率 · 流动比率 {{ ratio(c.current_ratio) }}</p><small>需结合行业、债务结构判断，低负债不等于低风险</small></section>
     </div>
-    <div class="hc-metrics">
-      <div class="hc-metric" v-for="m in metricList" :key="m.label">
-        <div class="hc-m-label">{{ m.label }}</div>
-        <div class="hc-m-value">{{ m.value }}</div>
-        <div v-if="m.yoy !== undefined" class="hc-m-yoy" :class="m.yoyClass">{{ m.yoy }}</div>
-      </div>
-    </div>
-    <div class="hc-tags">
-      <span
-        v-for="t in stock.tags"
-        :key="t.label"
-        class="hc-tag"
-        :class="t.type"
-      >{{ t.type === 'good' ? '✓' : '⚠' }} {{ t.label }}</span>
-      <span v-if="!stock.tags.length" class="hc-tag-none">暂无标签</span>
-    </div>
-  </div>
+    <div class="tags"><span v-for="tag in stock.tags" :key="tag.label" :class="tag.type">{{ tag.type === 'risk' ? '关注' : '特征' }} · {{ tag.label }}</span></div>
+    <footer>ROE 简单年化 {{ pct(c.roe_annualized) }} · 按期末净资产计算，非业绩预测</footer>
+  </article>
 </template>
-
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { FinStockCompare } from '../../api/client'
-
 const props = defineProps<{ stock: FinStockCompare }>()
-
-function fmtYi(v?: number | null): string {
-  if (v === null || v === undefined) return '-'
-  return (v / 1e8).toFixed(2) + '亿'
-}
-
-function fmtPct(v?: number | null, digits = 1): string | undefined {
-  if (v === null || v === undefined) return undefined
-  return (v >= 0 ? '+' : '') + (v * 100).toFixed(digits) + '%'
-}
-
-function fmtRatioPct(v?: number | null): string {
-  if (v === null || v === undefined) return '-'
-  return (v * 100).toFixed(1) + '%'
-}
-
-const metricList = computed(() => {
-  const c = props.stock.card
-  return [
-    { label: '营业总收入', value: fmtYi(c.revenue), yoy: fmtPct(c.revenue_yoy), yoyClass: cls(c.revenue_yoy) },
-    { label: '归母净利润', value: fmtYi(c.net_profit), yoy: fmtPct(c.net_profit_yoy), yoyClass: cls(c.net_profit_yoy) },
-    { label: 'ROE(年化)', value: fmtRatioPct(c.roe_annualized) },
-    { label: '毛利率', value: fmtRatioPct(c.gross_margin) },
-    { label: '资产负债率', value: fmtRatioPct(c.debt_ratio) },
-    { label: '经营现金流', value: fmtYi(c.ncf) },
-  ]
+const c = computed(() => props.stock.card)
+function money(v?:number|null) { return v == null ? '—' : Math.abs(v) >= 1e8 ? `${(v/1e8).toFixed(2)} 亿` : `${(v/1e4).toFixed(1)} 万` }
+function pct(v?:number|null, signed=false) { return v == null ? '—' : `${signed && v>0 ? '+' : ''}${(v*100).toFixed(1)}%` }
+function ratio(v?:number|null) { return v == null ? '—' : `${v.toFixed(2)} 倍` }
+const story = computed(() => {
+  const m = c.value
+  if (m.net_profit == null && m.revenue == null && m.ncf == null) return ['该报告期数据缺失，请选择其他报告期。']
+  const lines = []
+  if (m.revenue_yoy != null && m.net_profit_yoy != null) lines.push(m.revenue_yoy>0 && m.net_profit_yoy>0 ? '营收与净利润同比均增长。' : m.revenue_yoy>0 && m.net_profit_yoy<0 ? '营收增长，但净利润下降。' : `营收同比 ${pct(m.revenue_yoy,true)}，净利润同比 ${pct(m.net_profit_yoy,true)}。`)
+  else lines.push(`利润变化：${m.net_profit_state || '缺少同期数据'}。`)
+  if (m.ncf != null) lines.push(m.ncf<0 ? '经营现金流为负，本期经营活动净流出现金。' : m.net_profit != null && m.net_profit>0 ? `经营现金流为正，约为归母净利润的 ${ratio(m.ncf_ratio)}。` : '经营现金流非负，利润非正或缺失时不以净现比评价。')
+  return lines
 })
-
-function cls(v?: number | null): string {
-  if (v === null || v === undefined) return ''
-  return v >= 0 ? 'up' : 'down'
-}
 </script>
-
 <style scoped>
-.health-card {
-  background: #111827;
-  border: 1px solid #1f2937;
-  border-radius: 8px;
-  padding: 14px 16px;
-  min-width: 300px;
-  flex: 1;
-}
-
-.hc-header {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.hc-name {
-  color: #ffffff;
-  font-size: 15px;
-  font-weight: 700;
-}
-
-.hc-code {
-  color: #60a5fa;
-  font-size: 12px;
-}
-
-.hc-period {
-  margin-left: auto;
-  color: #6b7280;
-  font-size: 12px;
-}
-
-.hc-metrics {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px 12px;
-  margin-bottom: 12px;
-}
-
-.hc-m-label {
-  color: #9ca3af;
-  font-size: 12px;
-  margin-bottom: 2px;
-}
-
-.hc-m-value {
-  color: #e5e7eb;
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.hc-m-yoy {
-  font-size: 12px;
-}
-
-.hc-m-yoy.up {
-  color: #ef4444;
-}
-
-.hc-m-yoy.down {
-  color: #22c55e;
-}
-
-.hc-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.hc-tag {
-  font-size: 12px;
-  padding: 3px 8px;
-  border-radius: 4px;
-}
-
-.hc-tag.good {
-  background: rgba(239, 68, 68, 0.12);
-  color: #f87171;
-  border: 1px solid rgba(239, 68, 68, 0.35);
-}
-
-.hc-tag.risk {
-  background: rgba(34, 197, 94, 0.12);
-  color: #4ade80;
-  border: 1px solid rgba(34, 197, 94, 0.35);
-}
-
-.hc-tag-none {
-  color: #6b7280;
-  font-size: 12px;
-}
+.card { background:#111827; border:1px solid #253045; border-radius:12px; padding:22px; min-width:0; font-variant-numeric:tabular-nums; }h2 { color:#fff; font-size:18px; margin:0 0 8px; }small,header span { color:#9ca3af; font-size:12px; font-weight:400; }header small { margin-left:8px; }.story { border-left:3px solid #60a5fa; padding:6px 12px; margin:18px 0; background:#152239; }.story p { line-height:1.8; margin:4px 0; }.grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }section { padding:14px; background:#0b1220; border-radius:8px; }section>span { color:#93c5fd; font-size:12px; }strong { display:block; font-size:24px; color:#fff; margin:12px 0; }p { color:#d1d5db; font-size:13px; line-height:1.7; }small { line-height:1.7; }.tags { display:flex; gap:6px; flex-wrap:wrap; margin:16px 0; }.tags span { padding:4px 8px; border-radius:4px; font-size:12px; }.good { background:#172554; color:#93c5fd; }.risk { background:#422006; color:#fbbf24; }footer { color:#9ca3af; font-size:12px; line-height:1.7; }@media(max-width:550px){.grid{grid-template-columns:1fr}.card{padding:16px}}
 </style>
