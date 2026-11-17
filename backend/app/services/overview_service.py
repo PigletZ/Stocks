@@ -407,7 +407,7 @@ class OverviewService:
         # 基础过滤：ST、退市、科创、创业、北交、次新股
         if session is not None:
             from ..models import Stock
-            from ..strategies.filters import apply_base_filters
+            from .stock_filters import apply_base_filters
 
             codes = df["code"].dropna().unique().tolist()
             # 识别本地 Stock 表缺失的代码
@@ -479,7 +479,7 @@ class OverviewService:
         """
         from ..models import Stock, StockDailyQuote
         from ..services.tushare_stock_service import TushareStockService
-        from ..strategies.filters import apply_base_filters
+        from .stock_filters import apply_base_filters
 
         effective_date = self._resolve_effective_quote_date(target_date, session)
         if effective_date is None:
@@ -647,7 +647,7 @@ class OverviewService:
     ) -> List[dict]:
         """构建单期涨幅榜前 10。"""
         from ..models import Stock
-        from ..strategies.filters import apply_base_filters
+        from .stock_filters import apply_base_filters
 
         if start_date is None:
             return []

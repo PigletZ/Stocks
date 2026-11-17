@@ -1,13 +1,11 @@
 # Stocks - 股票复盘软件
 
-个人本地股票复盘工具：A 股 / ETF 行情复盘、策略选股与回测。本地 Web 应用，浏览器访问，数据源自 Tushare。
+个人股票复盘工具：A 股 / ETF 行情复盘与财务分析。浏览器访问，数据源自 Tushare。
 
 ## 功能
 
 - **概览**：日概览（指数/市场统计/情绪趋势/板块排行）、涨停、跌停、龙虎榜、涨幅榜，支持按交易日回看
 - **A 股**：全市场股票列表（搜索/筛选/排序）、自选股分组管理、股票详情（K 线 + 复盘回放模拟交易）
-- **策略选股**：龙虎榜游资追踪、首板不破·龙头跟踪（piglet）
-- **策略回测**：piglet 策略全栈回测（收盘信号 → 次日开盘买 → 固定天数后开盘卖）
 - **财务分析**：1~10 只股票三大报表对比（体检卡/指标对比/五维雷达/全科目报表，不支持银行股）
 - **ETF**：全 ETF 列表（品类筛选/排序）、ETF 涨幅榜
 
@@ -17,7 +15,7 @@
 |---|---|
 | [docs/overview.md](docs/overview.md) | 概览页 |
 | [docs/A_stocks.md](docs/A_stocks.md) | A 股（列表/自选/详情/回放） |
-| [docs/policy.md](docs/policy.md) | 策略选股与回测（策略明细见 docs/policy/） |
+| [docs/policy.md](docs/policy.md) | 已下线模块的历史设计，待重新讨论 |
 | [docs/financial-analysis.md](docs/financial-analysis.md) | 财务分析模块 |
 | [docs/etf.md](docs/etf.md) | ETF 模块 |
 | [docs/tushare_permissions.md](docs/tushare_permissions.md) | Tushare 接口权限归档 |

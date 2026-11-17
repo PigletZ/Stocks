@@ -551,7 +551,7 @@ class FinancialService:
     @staticmethod
     def get_highlight_pool(session: Session) -> List[str]:
         """亮点榜股票池：策略统一过滤条件（ST/退市/科创/创业/北交/次新）+ 银行股。"""
-        from ..strategies.filters import apply_base_filters
+        from .stock_filters import apply_base_filters
 
         all_codes = [s.code for s in session.exec(select(Stock)).all()]
         codes = set(apply_base_filters(all_codes, date.today(), session))

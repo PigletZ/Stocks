@@ -1,13 +1,13 @@
 import os
 from pathlib import Path
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 
 from .database import create_db_and_tables
-from .routers import stocks, bars, watchlist, overview, strategies, auth as auth_routes, backtest, etf, financial, review, journal, system, screener
+from .routers import stocks, bars, watchlist, overview, auth as auth_routes, etf, financial, review, journal, system
 from .auth import require_auth
 from .config import settings
 
@@ -53,14 +53,11 @@ app.include_router(stocks.router, prefix="/api/stocks", tags=["stocks"], depende
 app.include_router(bars.router, prefix="/api/bars", tags=["bars"], dependencies=_protected)
 app.include_router(watchlist.router, prefix="/api/watchlist", tags=["watchlist"], dependencies=_protected)
 app.include_router(overview.router, prefix="/api/overview", tags=["overview"], dependencies=_protected)
-app.include_router(strategies.router, prefix="/api/strategies", tags=["strategies"], dependencies=_protected)
-app.include_router(backtest.router, prefix="/api/backtests", tags=["backtests"], dependencies=_protected)
 app.include_router(etf.router, prefix="/api/etfs", tags=["etfs"], dependencies=_protected)
 app.include_router(financial.router, prefix="/api/financial", tags=["financial"], dependencies=_protected)
 app.include_router(review.router, prefix="/api/review", tags=["review"], dependencies=_protected)
 app.include_router(journal.router, prefix="/api/journal", tags=["journal"], dependencies=_protected)
 app.include_router(system.router, prefix="/api/system", tags=["system"], dependencies=_protected)
-app.include_router(screener.router, prefix="/api/screener", tags=["screener"], dependencies=_protected)
 
 
 @app.get("/api/health")
@@ -91,7 +88,7 @@ if _dist_path.exists() and (_dist_path / "index.html").exists():
     async def serve_spa(full_path: str):
         # API 路径已在上面处理，其余都返回 index.html（单页应用）
         if full_path.startswith("api/"):
-            return {"detail": "Not Found"}
+            raise HTTPException(status_code=404, detail="Not Found")
         # index.html 禁用强缓存（仅做协商缓存），确保前端发版后浏览器
         # 每次都能拿到最新的带 hash 资源引用，而不是加载旧入口页。
         return FileResponse(

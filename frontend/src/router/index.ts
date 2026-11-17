@@ -3,8 +3,6 @@ import OverviewView from '../views/OverviewView.vue'
 import StockListView from '../views/StockListView.vue'
 import WatchlistView from '../views/WatchlistView.vue'
 import StockDetailView from '../views/StockDetailView.vue'
-import StrategyView from '../views/StrategyView.vue'
-import BacktestView from '../views/BacktestView.vue'
 import EtfListView from '../views/EtfListView.vue'
 import EtfGainersView from '../views/EtfGainersView.vue'
 import FinancialAnalysisView from '../views/FinancialAnalysisView.vue'
@@ -12,7 +10,6 @@ import LimitLadderView from '../views/LimitLadderView.vue'
 import EmotionView from '../views/EmotionView.vue'
 import JournalView from '../views/JournalView.vue'
 import SystemView from '../views/SystemView.vue'
-import ScreenerView from '../views/ScreenerView.vue'
 import LoginView from '../views/LoginView.vue'
 import { useAuthStore } from '../stores/auth'
 
@@ -50,18 +47,6 @@ const router = createRouter({
       meta: { title: '股票详情' },
     },
     {
-      path: '/strategies',
-      name: 'strategies',
-      component: StrategyView,
-      meta: { title: '策略选股' },
-    },
-    {
-      path: '/backtest',
-      name: 'backtest',
-      component: BacktestView,
-      meta: { title: '策略回测' },
-    },
-    {
       path: '/financial',
       name: 'financial',
       component: FinancialAnalysisView,
@@ -97,12 +82,7 @@ const router = createRouter({
       component: EtfGainersView,
       meta: { title: 'ETF 涨幅榜', parent: 'etf' },
     },
-    {
-      path: '/screener',
-      name: 'screener',
-      component: ScreenerView,
-      meta: { title: '通用选股器' },
-    },
+    { path: '/:pathMatch(.*)*', redirect: '/' },
     {
       path: '/system',
       name: 'system',

@@ -7,21 +7,6 @@
         <span>概览</span>
       </router-link>
 
-      <router-link to="/strategies" class="nav-item" :class="{ active: $route.name === 'strategies' }">
-        <span class="icon">🎯</span>
-        <span>策略选股</span>
-      </router-link>
-
-      <router-link to="/screener" class="nav-item" :class="{ active: $route.name === 'screener' }">
-        <span class="icon">🔍</span>
-        <span>选股器</span>
-      </router-link>
-
-      <router-link to="/backtest" class="nav-item" :class="{ active: $route.name === 'backtest' }">
-        <span class="icon">📈</span>
-        <span>策略回测</span>
-      </router-link>
-
       <router-link to="/financial" class="nav-item" :class="{ active: $route.name === 'financial' }">
         <span class="icon">💰</span>
         <span>财务分析</span>
