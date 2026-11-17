@@ -7,7 +7,6 @@ import EtfListView from '../views/EtfListView.vue'
 import FinancialAnalysisView from '../views/FinancialAnalysisView.vue'
 import LimitLadderView from '../views/LimitLadderView.vue'
 import ReviewWorkbenchView from '../views/ReviewWorkbenchView.vue'
-import EmotionView from '../views/EmotionView.vue'
 import JournalView from '../views/JournalView.vue'
 import SystemView from '../views/SystemView.vue'
 import LoginView from '../views/LoginView.vue'
@@ -67,7 +66,7 @@ const router = createRouter({
     {
       path: '/review/emotion',
       name: 'emotion',
-      component: EmotionView,
+      redirect: to => ({ name: 'review-workbench', query: { ...to.query, section: 'emotion' }, hash: '#emotion' }),
       meta: { title: '情绪周期', parent: 'review' },
     },
     {

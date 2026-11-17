@@ -1,82 +1,31 @@
 <template>
-  <div class="page">
-    <div class="page-header">
-      <h1>情绪周期</h1>
-      <div class="actions">
-        <button
-          v-for="range in quickRanges"
-          :key="range.label"
-          class="toggle-btn"
-          :class="{ active: activeRange === range.label }"
-          @click="setQuickRange(range)"
-        >
-          {{ range.label }}
-        </button>
-      </div>
-    </div>
-
-    <div v-if="error" class="error-message">{{ error }}</div>
-    <div v-if="loading" class="loading-text">加载中...</div>
-
+  <div class="emotion-history">
+    <div class="range-bar"><span>截至 {{ asOf }} · 点击数据点切换当天复盘</span><div class="ranges"><button v-for="range in quickRanges" :key="range.label" :class="{ active: activeRange === range.label }" @click="setQuickRange(range)">{{ range.label }}</button></div></div>
+    <p class="note">涨跌停家数与最高板使用独立纵轴。炸板率和涨停延续率为价格状态统计，不代表实际收益；缺失值留空。</p>
+    <p v-if="error" class="error" role="alert">{{ error }} <button @click="setQuickRange(quickRanges.find(r => r.label === activeRange) || quickRanges[0])">重试</button></p>
+    <p v-if="loading" class="empty">正在加载情绪历史…</p>
     <template v-else>
-      <!-- 最新一日情绪摘要 -->
-      <div v-if="latest" class="stats-row">
-        <div class="stat-card">
-          <div class="stat-label">{{ latest.date }} 涨停 / 跌停</div>
-          <div class="stat-value">
-            <span class="up">{{ latest.limit_up }}</span> / <span class="down">{{ latest.limit_down }}</span>
-          </div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">炸板率</div>
-          <div class="stat-value" :class="(latest.break_rate ?? 0) >= 40 ? 'down' : ''">
-            {{ latest.break_rate !== null ? latest.break_rate + '%' : '-' }}
-          </div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">晋级率</div>
-          <div class="stat-value" :class="(latest.promote_rate ?? 0) >= 30 ? 'up' : ''">
-            {{ latest.promote_rate !== null ? latest.promote_rate + '%' : '-' }}
-          </div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">最高板</div>
-          <div class="stat-value up">{{ latest.max_board == null ? '—' : latest.max_board }} 板</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">两市成交额</div>
-          <div class="stat-value">{{ formatTurnover(latest.total_turnover) }}</div>
-        </div>
-      </div>
-
-      <!-- 涨停/跌停/最高板 -->
-      <div class="panel">
-        <div class="panel-title">涨跌停与最高板</div>
-        <div ref="countChart" class="chart"></div>
-      </div>
-
-      <!-- 炸板率/晋级率 -->
-      <div class="panel">
-        <div class="panel-title">炸板率与涨停延续率（价格状态统计，不代表实际收益）</div>
-        <div ref="rateChart" class="chart"></div>
+      <p v-if="!items.length && !error" class="empty">截至所选日期暂无历史数据</p>
+      <div class="chart-grid">
+        <section><h3>涨跌停与连板高度</h3><div ref="countChart" class="chart" role="img" aria-label="涨跌停家数与最高连板趋势"></div></section>
+        <section><h3>炸板与涨停延续</h3><div ref="rateChart" class="chart" role="img" aria-label="炸板率与涨停延续率趋势"></div></section>
       </div>
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
-import { fetchEmotionSeries, type EmotionItem } from '../api/client'
+import { fetchEmotionSeries, type EmotionItem } from '../../api/client'
 
 const items = ref<EmotionItem[]>([])
-const route = useRoute()
-const endDate = typeof route.query.date === 'string' ? route.query.date : new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Shanghai'}).format(new Date())
+const props = defineProps<{ asOf: string; rangeDays?: number }>()
+const emit = defineEmits<{ selectDate: [date: string]; rangeChange: [days: number] }>()
 let requestId = 0
 const loading = ref(false)
 const error = ref('')
-const activeRange = ref('近三月')
+const activeRange = ref('近一月')
 const countChart = ref<HTMLElement | null>(null)
 const rateChart = ref<HTMLElement | null>(null)
 let countInstance: echarts.ECharts | null = null
@@ -90,14 +39,8 @@ const quickRanges = [
   { label: '全部', days: 0 },
 ]
 
-const latest = computed(() => (items.value.length ? items.value[items.value.length - 1] : null))
-
 function formatDate(d: Date) {
   return d.toISOString().slice(0, 10)
-}
-
-function formatTurnover(v: number) {
-  return (v / 1e8).toFixed(0) + ' 亿'
 }
 
 function baseOption(dates: string[], series: echarts.SeriesOption[], yName = ''): echarts.EChartsOption {
@@ -127,6 +70,12 @@ function renderCharts() {
   if (!countChart.value || !rateChart.value || items.value.length === 0) return
   countInstance = countInstance || echarts.init(countChart.value)
   rateInstance = rateInstance || echarts.init(rateChart.value)
+  for (const chart of [countInstance, rateInstance]) {
+    chart.off('click')
+    chart.on('click', (point) => {
+      if (typeof point.name === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(point.name)) emit('selectDate', point.name)
+    })
+  }
 
   const dates = items.value.map((i) => i.date)
 
@@ -197,10 +146,11 @@ async function load(start?: string, end?: string) {
   rateInstance = null
   loading.value = true
   error.value = ''
+  items.value = []
   try {
     const result = await fetchEmotionSeries(start, end)
     if (request !== requestId) return
-    items.value = result
+    items.value = result.filter(row => row.date <= props.asOf)
   } catch (err: any) {
     if (request !== requestId) return
     error.value = err?.response?.data?.detail || '加载失败'
@@ -215,12 +165,13 @@ async function load(start?: string, end?: string) {
 
 function setQuickRange(range: { label: string; days: number }) {
   activeRange.value = range.label
+  emit('rangeChange', range.days)
   if (range.days === 0) {
-    load('2024-01-02', endDate)
+    load('2024-01-02', props.asOf)
   } else {
-    const end = new Date(`${endDate}T12:00:00`)
+    const end = new Date(`${props.asOf}T12:00:00`)
     const start = new Date(end.getTime() - range.days * 24 * 60 * 60 * 1000)
-    load(formatDate(start), endDate)
+    load(formatDate(start), props.asOf)
   }
 }
 
@@ -230,116 +181,22 @@ function onResize() {
 }
 
 onMounted(() => {
-  setQuickRange(quickRanges[1])
+  setQuickRange(quickRanges.find(range => range.days === props.rangeDays) || quickRanges[0])
   window.addEventListener('resize', onResize)
 })
 
 onBeforeUnmount(() => {
+  requestId++
   window.removeEventListener('resize', onResize)
   countInstance?.dispose()
   rateInstance?.dispose()
 })
+watch(() => props.asOf, () => {
+  const selected = quickRanges.find(range => range.label === activeRange.value) || quickRanges[0]
+  setQuickRange(selected)
+})
 </script>
 
 <style scoped>
-.page {
-  padding: 20px;
-  max-width: 1400px;
-}
-
-.page-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
-}
-
-.page-header h1 {
-  font-size: 20px;
-  color: #e5e7eb;
-}
-
-.actions {
-  display: flex;
-  gap: 8px;
-}
-
-.toggle-btn {
-  padding: 6px 14px;
-  border-radius: 6px;
-  border: 1px solid #374151;
-  background: #1f2937;
-  color: #9ca3af;
-  font-size: 13px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.toggle-btn.active {
-  background: #2563eb;
-  border-color: #2563eb;
-  color: #fff;
-}
-
-.stats-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.stat-card {
-  background: #1f2937;
-  border-radius: 10px;
-  padding: 14px 18px;
-}
-
-.stat-label {
-  font-size: 12px;
-  color: #9ca3af;
-  margin-bottom: 6px;
-}
-
-.stat-value {
-  font-size: 20px;
-  font-weight: 600;
-  color: #e5e7eb;
-}
-
-.up { color: #ef4444; }
-.down { color: #22c55e; }
-
-.panel {
-  background: #1f2937;
-  border-radius: 10px;
-  padding: 18px;
-  margin-bottom: 16px;
-}
-
-.panel-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #d1d5db;
-  margin-bottom: 10px;
-}
-
-.chart {
-  width: 100%;
-  height: 320px;
-}
-
-.loading-text {
-  color: #9ca3af;
-  padding: 40px;
-  text-align: center;
-}
-
-.error-message {
-  background: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.4);
-  color: #ef4444;
-  border-radius: 8px;
-  padding: 10px 14px;
-  margin-bottom: 16px;
-}
+.range-bar,.ranges { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }.range-bar { justify-content:space-between; color:#9ca3af; font-size:12px; margin-top:16px; }.ranges button,button { background:#111827; border:1px solid #374151; color:#d1d5db; border-radius:6px; padding:6px 10px; cursor:pointer; }.ranges .active { background:#172554; border-color:#60a5fa; color:#fff; }.note { color:#9ca3af; font-size:12px; line-height:1.8; }.chart-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; }h3 { color:#d1d5db; font-size:14px; font-weight:500; margin:12px 0; }.chart { height:300px; width:100%; }.error { color:#fca5a5; font-size:13px; }.empty { color:#9ca3af; font-size:13px; text-align:center; padding:20px; }@media(max-width:1000px) { .chart-grid { grid-template-columns:1fr; } }
 </style>

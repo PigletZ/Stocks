@@ -37,9 +37,7 @@
           <router-link to="/review/ladder" class="nav-item" :class="{ active: $route.name === 'limit-ladder' }">
             连板梯队
           </router-link>
-          <router-link to="/review/emotion" class="nav-item" :class="{ active: $route.name === 'emotion' }">
-            情绪周期
-          </router-link>
+
           <router-link to="/review/journal" class="nav-item" :class="{ active: $route.name === 'journal' }">
             复盘日志
           </router-link>
