@@ -148,9 +148,11 @@ def _extract_category(name: str, benchmark: str) -> str:
     规则基于关键词匹配，无法覆盖全部 ETF，未命中返回"其他"。
     """
     text = f"{name or ''} {benchmark or ''}"
-    for keywords, category in ETF_CATEGORY_RULES:
+    for keywords, category in sorted(ETF_CATEGORY_RULES, key=lambda rule: max(map(len, rule[0])), reverse=True):
         for kw in keywords:
-            if kw in text:
+            if kw.upper() in text.upper():
+                if category == "商品-有色金属" and not any(k in text for k in ("期货", "商品")):
+                    return "周期-有色"
                 return category
     return "其他"
 
@@ -162,6 +164,7 @@ class EtfService:
         self._tushare_pro = None
         self._etf_list_cache: Optional[pd.DataFrame] = None
         self._etf_list_cache_time: Optional[datetime] = None
+        self._daily_cache = {}
 
     def _get_tushare_pro(self):
         """使用 Tushare token 初始化 Pro 接口"""
@@ -190,15 +193,8 @@ class EtfService:
             df = df[df["is_open"] == 1]
             dates = sorted(df["cal_date"].astype(str).tolist())
             return [datetime.strptime(d, "%Y%m%d").date() for d in dates]
-        except Exception:
-            # fallback：仅剔除周末
-            dates = []
-            current = start
-            while current <= end:
-                if current.weekday() < 5:
-                    dates.append(current)
-                current += timedelta(days=1)
-            return dates
+        except Exception as error:
+            raise RuntimeError("交易日历获取失败，无法准确计算交易日涨幅") from error
 
     def _get_previous_trade_date(self, target_date: date) -> Optional[date]:
         """获取 target_date 之前最近的一个交易日"""
@@ -219,6 +215,9 @@ class EtfService:
             if df is None or df.empty:
                 return pd.DataFrame()
             df = df.copy()
+            df = df[df["name"].fillna("").str.upper().str.contains("ETF", regex=False)]
+            if "status" in df:
+                df = df[df["status"] == "L"]
             df["code"] = df["ts_code"].astype(str).apply(self._ts_code_to_code)
             return df
         except Exception as e:
@@ -227,6 +226,9 @@ class EtfService:
 
     def _fetch_etf_daily_for_date(self, target_date: date) -> pd.DataFrame:
         """从 Tushare 获取指定交易日的全市场 ETF 日线"""
+        cached = self._daily_cache.get(target_date)
+        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 300:
+            return cached[1].copy()
         try:
             date_str = target_date.strftime("%Y%m%d")
             df = self._get_tushare_pro().fund_daily(trade_date=date_str)
@@ -234,6 +236,9 @@ class EtfService:
                 return pd.DataFrame()
             df = df.copy()
             df["code"] = df["ts_code"].astype(str).apply(self._ts_code_to_code)
+            self._daily_cache[target_date] = (datetime.utcnow(), df.copy())
+            if len(self._daily_cache) > 100:
+                del self._daily_cache[next(iter(self._daily_cache))]
             return df
         except Exception as e:
             logger.warning("获取 ETF 日线 %s 失败: %s", target_date, e)
@@ -245,7 +250,7 @@ class EtfService:
         if (
             self._etf_list_cache is not None
             and self._etf_list_cache_time is not None
-            and (now - self._etf_list_cache_time).seconds < 3600
+            and (now - self._etf_list_cache_time).total_seconds() < 3600
         ):
             return self._etf_list_cache
 
@@ -272,6 +277,8 @@ class EtfService:
             prev_date = self._get_previous_trade_date(target_date)
             if prev_date:
                 df_daily = self._fetch_etf_daily_for_date(prev_date)
+                if not df_daily.empty:
+                    target_date = prev_date
 
         effective_date = target_date if df_daily is not None and not df_daily.empty else None
 
@@ -324,7 +331,7 @@ class EtfService:
                 "category": str(row.get("category", "")),
                 "close": float(row["close"]) if pd.notna(row.get("close")) else 0.0,
                 "change_pct": float(row["pct_chg"]) if pd.notna(row.get("pct_chg")) else 0.0,
-                "amount": float(row["amount"]) if pd.notna(row.get("amount")) else 0.0,
+                "amount": float(row["amount"]) * 1000 if pd.notna(row.get("amount")) else 0.0,
             })
 
         return {

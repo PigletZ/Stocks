@@ -4,7 +4,6 @@ import StockListView from '../views/StockListView.vue'
 import WatchlistView from '../views/WatchlistView.vue'
 import StockDetailView from '../views/StockDetailView.vue'
 import EtfListView from '../views/EtfListView.vue'
-import EtfGainersView from '../views/EtfGainersView.vue'
 import FinancialAnalysisView from '../views/FinancialAnalysisView.vue'
 import LimitLadderView from '../views/LimitLadderView.vue'
 import EmotionView from '../views/EmotionView.vue'
@@ -79,7 +78,7 @@ const router = createRouter({
     {
       path: '/etfs/gainers',
       name: 'etf-gainers',
-      component: EtfGainersView,
+      redirect: '/etfs',
       meta: { title: 'ETF 涨幅榜', parent: 'etf' },
     },
     { path: '/:pathMatch(.*)*', redirect: '/' },

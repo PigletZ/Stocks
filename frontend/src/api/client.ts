@@ -474,6 +474,25 @@ export interface EtfItem {
   amount: number
 }
 
+export interface EtfObservation {
+  code: string; name: string; category: string; benchmark: string; management: string
+  close: number; amount: number; change_pct: number | null
+  gain_2: number | null; gain_5: number | null; gain_10: number | null; gain_20: number | null
+  state: string
+}
+export interface EtfDirection {
+  category: string; count: number; samples_5: number; positive_5: number
+  median_5: number | null; median_20: number | null; representative: string; amount: number
+}
+export interface EtfDashboard {
+  target_date: string; effective_date: string; base_dates: Record<string, string | null>
+  min_amount: number; quoted_count: number; items: EtfObservation[]; directions: EtfDirection[]; missing_windows: number[]
+}
+export async function fetchEtfDashboard(date: string, minAmount: number, signal?: AbortSignal): Promise<EtfDashboard> {
+  const { data } = await api.get('/etfs/dashboard', { params: { date, min_amount: minAmount }, signal, timeout: 120000 })
+  return data
+}
+
 export interface EtfListResponse {
   total: number
   items: EtfItem[]

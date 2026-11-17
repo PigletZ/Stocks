@@ -52,11 +52,9 @@
         </div>
         <div v-show="etfExpanded" class="nav-sub">
           <router-link to="/etfs" class="nav-item" :class="{ active: $route.name === 'etf-list' }">
-            全 ETF 列表
+            ETF 观察台
           </router-link>
-          <router-link to="/etfs/gainers" class="nav-item" :class="{ active: $route.name === 'etf-gainers' }">
-            涨幅榜
-          </router-link>
+
         </div>
       </div>
       <router-link to="/system" class="nav-item" :class="{ active: $route.name === 'system' }">
