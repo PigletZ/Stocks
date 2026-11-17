@@ -6,6 +6,7 @@
           <div class="popup-title">
             <span class="stock-name">{{ name }}</span>
             <span class="stock-code">{{ code }}</span>
+            <span v-if="asOf" class="stock-code">截至 {{ asOf }}</span>
             <span v-if="industry" class="industry-tag">{{ industry }}</span>
           </div>
           <button class="close-btn" @click="$emit('close')">×</button>
@@ -57,6 +58,7 @@ const bars = ref<Bar[]>([])
 const allDailyHistory = ref<StockDailyHistoryItem[]>([])
 const loading = ref(false)
 const error = ref('')
+let detailRequest = 0
 
 const chartExtraData = computed(() => {
   const map: Record<string, ChartTooltipExtra> = {}
@@ -93,6 +95,7 @@ function computeDateRange() {
 }
 
 async function loadData() {
+  const request = ++detailRequest
   if (!props.code) return
   loading.value = true
   error.value = ''
@@ -104,13 +107,15 @@ async function loadData() {
       fetchBars(props.code, '1d', fetchStart, end),
       fetchStockDailyHistory(props.code, fetchStart, end),
     ])
+    if (request !== detailRequest) return
     bars.value = barsData
     allDailyHistory.value = historyData
   } catch (err: any) {
+    if (request !== detailRequest) return
     error.value = '加载失败，请稍后重试'
     console.error('Failed to load stock detail', err)
   } finally {
-    loading.value = false
+    if (request === detailRequest) loading.value = false
   }
 }
 
@@ -121,6 +126,8 @@ onMounted(() => {
 watch(() => [props.visible, props.code, props.asOf], ([visible]) => {
   if (visible) {
     loadData()
+  } else {
+    detailRequest++
   }
 })
 </script>

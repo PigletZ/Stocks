@@ -361,8 +361,13 @@ async function onAddTrade() {
 
 async function onDeleteTrade(id: number) {
   if (!confirm('确认删除这条交易记录？')) return
-  await deleteJournalTrade(id)
-  await Promise.all([loadTrades(), loadStats(), loadMonthMarks()])
+  formError.value = ''
+  try {
+    await deleteJournalTrade(id)
+    await Promise.all([loadTrades(), loadStats(), loadMonthMarks()])
+  } catch (error: any) {
+    formError.value = error?.response?.data?.detail || '删除失败，记录仍保留。'
+  }
 }
 
 // ===== 持仓 =====
