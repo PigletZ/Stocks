@@ -10,17 +10,19 @@
     </div>
 
     <!-- 统计卡 -->
+    <p v-if="stats.incomplete_sell_count" class="error-message">有 {{ stats.incomplete_sell_count }} 笔卖出缺少买入成本，相关盈亏留空，不计入胜率。请先补齐记录。</p>
+    <p v-if="noteError" class="error-message" role="alert">{{ noteError }}</p>
     <div class="stats-row">
       <div class="stat-card">
-        <div class="stat-label">已实现盈亏</div>
+        <div class="stat-label">累计已实现盈亏</div>
         <div class="stat-value" :class="changeClass(stats.total_realized)">{{ fmtMoney(stats.total_realized) }}</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">胜率（{{ stats.win_count }}胜 / {{ stats.loss_count }}负）</div>
+        <div class="stat-label">累计有效卖出胜率（{{ stats.win_count }}胜 / {{ stats.loss_count }}负）</div>
         <div class="stat-value">{{ stats.win_rate !== null ? stats.win_rate + '%' : '-' }}</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">买入 / 卖出次数</div>
+        <div class="stat-label">累计买入 / 卖出次数</div>
         <div class="stat-value">{{ stats.buy_count }} / {{ stats.sell_count }}</div>
       </div>
       <div class="stat-card">
@@ -63,13 +65,14 @@
         <div class="panel-title">{{ selectedDate }} 复盘笔记</div>
         <textarea
           v-model="noteContent"
+          :disabled="!noteReady"
           class="note-editor"
           placeholder="今日市场总结、操作回顾、明日计划..."
           rows="12"
         ></textarea>
         <input v-model="noteCodes" class="codes-input" placeholder="关联股票代码，逗号分隔（如 000001,600519）" />
         <div class="editor-actions">
-          <button class="btn-primary" @click="onSaveNote" :disabled="saving">{{ saving ? '保存中...' : '保存' }}</button>
+          <button class="btn-primary" @click="onSaveNote" :disabled="saving || !noteReady">{{ saving ? '保存中...' : '保存' }}</button>
           <button class="btn-link danger" @click="onDeleteNote" v-if="noteExists">删除</button>
           <span v-if="savedTip" class="saved-tip">已保存</span>
         </div>
@@ -172,7 +175,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, onBeforeRouteLeave } from 'vue-router'
 import {
   createJournalTrade,
   deleteJournalTrade,
@@ -198,7 +202,15 @@ const calMonth = ref(today.getMonth() + 1)
 const noteDates = ref<Set<string>>(new Set())
 const tradeDates = ref<Set<string>>(new Set())
 const selectedDate = ref(formatDate(today))
+const route = useRoute()
+if (typeof route.query.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(route.query.date)) {
+  selectedDate.value = route.query.date
+  calYear.value = Number(route.query.date.slice(0,4))
+  calMonth.value = Number(route.query.date.slice(5,7))
+}
 const noteContent = ref('')
+const noteReady = ref(false), noteError = ref(''), serverContent = ref(''), serverCodes = ref(''), draftFailed = ref(false)
+let noteRequest = 0
 const noteCodes = ref('')
 const noteExists = ref(false)
 const saving = ref(false)
@@ -254,34 +266,51 @@ function shiftMonth(delta: number) {
 }
 
 async function selectDate(d: string) {
+  if (draftFailed.value && !confirm('浏览器草稿保存失败，确定切换日期吗？')) return
+  const request = ++noteRequest
+  noteReady.value = false
   selectedDate.value = d
   savedTip.value = false
-  const note = await fetchNote(d)
-  noteContent.value = note.content
-  noteCodes.value = note.codes.join(',')
-  noteExists.value = !!note.content
-  dayTrades.value = await fetchJournalTrades(undefined, d, d)
+  noteError.value = ''
+  try {
+    const [note,trades] = await Promise.all([fetchNote(d),fetchJournalTrades(undefined,d,d)])
+    if (request !== noteRequest) return
+    serverContent.value = note.content; serverCodes.value = note.codes.join(',')
+    noteContent.value = note.content; noteCodes.value = serverCodes.value
+    noteExists.value = !!note.content; dayTrades.value = trades
+    try { const draft = JSON.parse(localStorage.getItem(`stocks_review_draft_v2:${d}`)||'null'); if (typeof draft?.content === 'string' && (draft.content !== note.content || (typeof draft.codes === 'string' && draft.codes !== serverCodes.value))) { noteContent.value=draft.content; if (typeof draft.codes === 'string') noteCodes.value=draft.codes; noteError.value='已恢复浏览器草稿，请检查后保存。' } } catch { noteError.value='草稿读取失败，当前为服务器版本。' }
+    noteReady.value = true
+  } catch { if (request === noteRequest) noteError.value='笔记加载失败，请重新选择日期重试。' }
 }
 
 async function onSaveNote() {
   saving.value = true
+  const date = selectedDate.value, content = noteContent.value, codeText = noteCodes.value
   try {
-    const codes = noteCodes.value.split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean)
-    await saveNote(selectedDate.value, noteContent.value, codes)
+    const codes = codeText.split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean)
+    await saveNote(date, content, codes)
+    if (selectedDate.value !== date) return
+    serverContent.value = content; serverCodes.value = codeText
+    storeDraft()
     noteExists.value = !!noteContent.value
     savedTip.value = true
     setTimeout(() => (savedTip.value = false), 2000)
     loadMonthMarks()
-  } finally {
+  } catch { noteError.value='保存失败，请重试；草稿保留在浏览器。' } finally {
     saving.value = false
   }
 }
 
 async function onDeleteNote() {
-  await deleteNote(selectedDate.value)
+  if (!confirm('确认删除服务器上的这一天笔记？')) return
+  const date = selectedDate.value
+  await deleteNote(date)
+  if (date !== selectedDate.value) return
+  serverContent.value = ''; serverCodes.value = ''
   noteContent.value = ''
   noteCodes.value = ''
   noteExists.value = false
+  storeDraft()
   loadMonthMarks()
 }
 
@@ -358,13 +387,25 @@ function changeClass(n: number | null | undefined) {
   return n >= 0 ? 'up' : 'down'
 }
 
-function fmtMoney(v: number) {
-  return v.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+function fmtMoney(v: number | null) {
+  return v == null ? '—' : v.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 function formatDateTime(iso: string) {
-  return iso.slice(0, 16).replace('T', ' ')
+  return new Date(iso.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(iso) ? iso : iso+'Z').toLocaleString('zh-CN', {hour12:false})
 }
+
+function storeDraft() {
+  if (!noteReady.value) return
+  try {
+    const key = `stocks_review_draft_v2:${selectedDate.value}`
+    if (noteContent.value !== serverContent.value || noteCodes.value !== serverCodes.value) localStorage.setItem(key,JSON.stringify({content:noteContent.value,codes:noteCodes.value}))
+    else localStorage.removeItem(key)
+    draftFailed.value = false
+  } catch { draftFailed.value=true; noteError.value='浏览器无法保存草稿，请先保存到服务器再离开。' }
+}
+watch([noteContent,noteCodes],storeDraft,{flush:'sync'})
+onBeforeRouteLeave(()=>!draftFailed.value || confirm('草稿保存失败，确定离开吗？'))
 
 onMounted(() => {
   // 默认交易时间填当前时间

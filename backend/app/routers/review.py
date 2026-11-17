@@ -1,13 +1,76 @@
 from datetime import datetime, date, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
+from typing import Literal
+from sqlalchemy.exc import IntegrityError
+from sqlmodel import select
 from sqlmodel import Session
 
 from ..database import get_session
 from ..services.review_service import ReviewService
+from ..services.review_workbench import ReviewWorkbench, today_shanghai
+from ..models import ReviewObservation, ReviewVerification, Stock
 
 router = APIRouter()
+
+
+@router.get("/workbench")
+def workbench(target: Optional[date] = Query(None, alias="date"), session: Session = Depends(get_session)):
+    return ReviewWorkbench().get(session, target)
+
+
+class ObservationIn(BaseModel):
+    code: str = Field(pattern=r"^\d{6}$")
+    observation_date: date
+    reason: str = Field(min_length=1, max_length=2000)
+    criterion: str = Field(min_length=1, max_length=2000)
+    deadline: date
+
+
+@router.post("/observations")
+def create_observation(body: ObservationIn, session: Session = Depends(get_session)):
+    if body.observation_date > today_shanghai() or body.deadline < body.observation_date:
+        raise HTTPException(400, "关注日期不能晚于今天，验证期限不能早于关注日期")
+    if not body.reason.strip() or not body.criterion.strip():
+        raise HTTPException(400, "请填写关注理由及待验证条件")
+    if session.exec(select(Stock).where(Stock.code == body.code)).first() is None:
+        raise HTTPException(400, "请输入本地股票列表中的 A 股代码")
+    record = ReviewObservation(stock_code=body.code, observation_date=body.observation_date,
+        reason=body.reason.strip(), criterion=body.criterion.strip(), deadline=body.deadline)
+    session.add(record)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(409, "该股票在这一天已有关注记录，请直接补充验证结果")
+    return {"id": record.id}
+
+
+class VerificationIn(BaseModel):
+    verdict: Literal['符合预期', '不符合预期', '继续观察']
+    explanation: str = Field(min_length=1, max_length=2000)
+
+
+@router.put("/observations/{observation_id}/verification")
+def verify_observation(observation_id: int, body: VerificationIn,
+                       target: date = Query(..., alias="date"), session: Session = Depends(get_session)):
+    observation = session.get(ReviewObservation, observation_id)
+    if observation is None:
+        raise HTTPException(404, "关注记录不存在")
+    if target < observation.observation_date or target > today_shanghai():
+        raise HTTPException(400, "验证日期必须在关注日期与今天之间")
+    if not body.explanation.strip():
+        raise HTTPException(400, "请填写判断依据，价格上涨不等于符合原始预期")
+    row = session.exec(select(ReviewVerification).where(ReviewVerification.observation_id == observation_id,
+        ReviewVerification.review_date == target)).first()
+    if row is None:
+        row = ReviewVerification(observation_id=observation_id, review_date=target, verdict=body.verdict)
+    row.verdict, row.explanation, row.updated_at = body.verdict, body.explanation.strip(), datetime.utcnow()
+    session.add(row)
+    session.commit()
+    return {"saved": True}
 
 
 def _parse_date(d: Optional[str]) -> Optional[date]:

@@ -838,19 +838,20 @@ export interface LimitPerfItem {
   prev_boards: number
   today_pct: number | null
   today_boards: number | null
-  status: '晋级' | '炸板' | '红盘' | '绿盘' | '跌停'
+  status: '晋级' | '炸板' | '红盘' | '绿盘' | '跌停' | '平盘' | '未知'
 }
 
 export interface LimitPerfStats {
   total: number
-  promoted: number
-  promote_rate: number
-  opened: number
-  limit_down: number
+  promoted: number | null
+  promote_rate: number | null
+  opened: number | null
+  limit_down: number | null
   avg_pct: number | null
 }
 
 export interface LimitPerfResponse {
+  ready?: boolean
   trade_date: string | null
   prev_date: string | null
   stats: LimitPerfStats
@@ -862,6 +863,35 @@ export async function fetchLimitPerformance(date?: string): Promise<LimitPerfRes
   return data
 }
 
+export interface ReviewObservation {
+  id: number; code: string; name: string; observation_date: string; deadline: string
+  reason: string; criterion: string; created_at: string; base_close: number | null; close: number | null
+  price_change: number | null; verdict: string; explanation: string; verified_on: string | null; verified_at: string | null
+}
+export interface ReviewWorkbenchData {
+  date: string; previous_date: string | null; available_dates: string[]; snapshot: DashboardSnapshot | null
+  performance: LimitPerfResponse & {
+    ready: boolean
+    groups: { label: string; total: number; continued: number | null; rate: number | null }[]
+    leaders: LimitPerfItem[]
+    stats: LimitPerfStats & { median_pct: number | null; quote_samples: number; unknown: number }
+  }
+  structure: { ready: boolean; first: number | null; second: number | null; higher: number | null; highest: number | null }
+  observations: ReviewObservation[]
+}
+export async function fetchReviewWorkbench(date?: string, signal?: AbortSignal): Promise<ReviewWorkbenchData> {
+  const { data } = await api.get('/review/workbench', { params: { date }, signal })
+  return data
+}
+export async function createReviewObservation(body: { code: string; observation_date: string; reason: string; criterion: string; deadline: string }) {
+  const { data } = await api.post('/review/observations', body)
+  return data
+}
+export async function verifyReviewObservation(id: number, date: string, verdict: string, explanation: string) {
+  const { data } = await api.put(`/review/observations/${id}/verification`, { verdict, explanation }, { params: { date } })
+  return data
+}
+
 export interface EmotionItem {
   date: string
   limit_up: number
@@ -869,7 +899,7 @@ export interface EmotionItem {
   opened_limit: number
   break_rate: number | null
   promote_rate: number | null
-  max_board: number
+  max_board: number | null
   up: number
   down: number
   total_turnover: number
@@ -960,7 +990,7 @@ export interface PositionItem {
   close: number | null
   unrealized_pnl: number | null
   unrealized_pct: number | null
-  realized_pnl: number
+  realized_pnl: number | null
 }
 
 export async function fetchPositions(): Promise<PositionItem[]> {
@@ -969,7 +999,8 @@ export async function fetchPositions(): Promise<PositionItem[]> {
 }
 
 export interface JournalStats {
-  total_realized: number
+  total_realized: number | null
+  incomplete_sell_count?: number
   win_count: number
   loss_count: number
   win_rate: number | null

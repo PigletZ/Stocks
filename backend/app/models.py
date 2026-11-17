@@ -172,6 +172,30 @@ class ReviewNote(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class ReviewObservation(SQLModel, table=True):
+    """有日期与原始依据的关注记录，原始判断不随验证改写。"""
+    __tablename__ = "review_observation"
+    __table_args__ = (UniqueConstraint("stock_code", "observation_date", name="uix_observation_code_date"),)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    stock_code: str = Field(index=True)
+    observation_date: date = Field(index=True)
+    reason: str
+    criterion: str
+    deadline: date
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ReviewVerification(SQLModel, table=True):
+    __tablename__ = "review_verification"
+    __table_args__ = (UniqueConstraint("observation_id", "review_date", name="uix_verification_observation_date"),)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    observation_id: int = Field(foreign_key="review_observation.id", index=True)
+    review_date: date = Field(index=True)
+    verdict: str
+    explanation: str = ""
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Holding(SQLModel, table=True):
     """手动录入的持仓（无台账记录的股票；有台账的以 FIFO 计算为准）"""
 

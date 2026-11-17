@@ -155,146 +155,39 @@ class ReviewService:
 
     # ==================== 昨日涨停今日表现 ====================
 
-    def get_limit_performance(self, target_date: Optional[date], session: Session) -> dict:
-        """昨日涨停股在指定日期的表现：晋级率、平均涨幅、明细。
+    def get_limit_performance(self, target_date, session):
+        from .review_workbench import ReviewWorkbench
+        d, current, previous = ReviewWorkbench.dates(session, target_date)
+        return ReviewWorkbench.performance(session, d, current, previous)
 
-        指定日期缺本地涨幅数据时（早于 StockDailyQuote 覆盖范围），
-        实时从 Tushare daily 补齐（单日一次请求）。
-        """
-        d = target_date or self.get_latest_limit_date(session)
-        if d is None:
-            return {"trade_date": None, "prev_date": None, "stats": {}, "items": []}
-
-        prev_date = session.exec(
-            select(LimitUpDaily.trade_date)
-            .where(LimitUpDaily.trade_date < d)
-            .order_by(LimitUpDaily.trade_date.desc())
-            .limit(1)
-        ).first()
-        if prev_date is None:
-            return {"trade_date": d.isoformat(), "prev_date": None, "stats": {}, "items": []}
-
-        prev_rows = session.exec(
-            select(LimitUpDaily).where(
-                LimitUpDaily.trade_date == prev_date,
-                LimitUpDaily.limit_type == "U",
-            )
-        ).all()
-
-        # 今日涨跌停状态
-        today_rows = session.exec(
-            select(LimitUpDaily).where(LimitUpDaily.trade_date == d)
-        ).all()
-        today_map = {r.stock_code: r for r in today_rows}
-
-        # 今日涨幅：优先 StockDailyQuote，缺失的实时补拉
-        codes = [r.stock_code for r in prev_rows]
-        quotes = session.exec(
-            select(StockDailyQuote).where(
-                StockDailyQuote.trade_date == d,
-                StockDailyQuote.stock_code.in_(codes),
-            )
-        ).all()
-        pct_map = {q.stock_code: q.change_pct for q in quotes if q.change_pct is not None}
-        missing = [c for c in codes if c not in pct_map and c not in today_map]
-        if missing:
-            pct_map.update(self._fetch_pct_live(d, missing))
-
-        items = []
-        for r in prev_rows:
-            t = today_map.get(r.stock_code)
-            if t is not None and t.limit_type == "U":
-                status = "晋级"
-            elif t is not None and t.limit_type == "Z":
-                status = "炸板"
-            elif t is not None and t.limit_type == "D":
-                status = "跌停"
-            else:
-                pct = pct_map.get(r.stock_code)
-                status = "红盘" if (pct is not None and pct >= 0) else "绿盘"
-            items.append({
-                "code": r.stock_code,
-                "name": r.name,
-                "prev_boards": r.limit_times if r.limit_times and r.limit_times > 0 else 1,
-                "today_pct": round(pct_map.get(r.stock_code), 2) if pct_map.get(r.stock_code) is not None else (t.pct_chg if t else None),
-                "today_boards": t.limit_times if t and t.limit_type == "U" else None,
-                "status": status,
-            })
-
-        pcts = [i["today_pct"] for i in items if i["today_pct"] is not None]
-        promoted = sum(1 for i in items if i["status"] == "晋级")
-        stats = {
-            "total": len(items),
-            "promoted": promoted,
-            "promote_rate": round(promoted / len(items) * 100, 1) if items else 0,
-            "opened": sum(1 for i in items if i["status"] == "炸板"),
-            "limit_down": sum(1 for i in items if i["status"] == "跌停"),
-            "avg_pct": round(sum(pcts) / len(pcts), 2) if pcts else None,
-        }
-        # 晋级优先，其余按涨幅排序
-        order = {"晋级": 0, "炸板": 1, "红盘": 2, "绿盘": 3, "跌停": 4}
-        items.sort(key=lambda i: (order.get(i["status"], 5), -(i["today_pct"] or -999)))
-        return {
-            "trade_date": d.isoformat(),
-            "prev_date": prev_date.isoformat(),
-            "stats": stats,
-            "items": items,
-        }
-
-    # ==================== 情绪周期 ====================
-
-    def get_emotion_series(self, start: date, end: date, session: Session) -> List[dict]:
-        """情绪指标时间序列：涨停/跌停/炸板数、炸板率、晋级率、最高板、成交额。"""
-        stats = session.exec(
-            select(MarketDailyStat).where(
-                MarketDailyStat.stat_date >= start,
-                MarketDailyStat.stat_date <= end,
-            ).order_by(MarketDailyStat.stat_date)
-        ).all()
-
-        # 涨停明细用于晋级率与最高板（多取一天用于首日晋级计算）
-        limit_rows = session.exec(
-            select(LimitUpDaily).where(
-                LimitUpDaily.trade_date >= start,
-                LimitUpDaily.trade_date <= end,
-                LimitUpDaily.limit_type == "U",
-            )
-        ).all()
-        by_date: Dict[date, List[LimitUpDaily]] = {}
-        for r in limit_rows:
-            by_date.setdefault(r.trade_date, []).append(r)
-
-        result = []
-        prev_codes: set = set()
-        for s in stats:
-            day_rows = by_date.get(s.stat_date, [])
-            codes = {r.stock_code for r in day_rows}
-            promoted = len(codes & prev_codes)
-            promote_rate = round(promoted / len(prev_codes) * 100, 1) if prev_codes else None
-            max_board = max(
-                (r.limit_times for r in day_rows if r.limit_times and r.limit_times > 0),
-                default=(1 if day_rows else 0),
-            )
-            break_rate = (
-                round(s.opened_limit / (s.limit_up + s.opened_limit) * 100, 1)
-                if (s.limit_up + s.opened_limit) > 0 else None
-            )
-            result.append({
-                "date": s.stat_date.isoformat(),
-                "limit_up": s.limit_up,
-                "limit_down": s.limit_down,
-                "opened_limit": s.opened_limit,
-                "break_rate": break_rate,
-                "promote_rate": promote_rate,
-                "max_board": max_board,
-                "up": s.up,
-                "down": s.down,
-                "total_turnover": s.total_turnover,
-            })
-            prev_codes = codes
+    def get_emotion_series(self, start, end, session):
+        previous = session.exec(select(MarketDailyStat).where(MarketDailyStat.stat_date < start)
+            .order_by(MarketDailyStat.stat_date.desc()).limit(1)).first()
+        stats = list(session.exec(select(MarketDailyStat).where(MarketDailyStat.stat_date >= start,
+            MarketDailyStat.stat_date <= end).order_by(MarketDailyStat.stat_date)).all())
+        all_stats = ([previous] if previous else []) + stats
+        if not all_stats:
+            return []
+        rows = session.exec(select(LimitUpDaily).where(LimitUpDaily.trade_date >= all_stats[0].stat_date,
+            LimitUpDaily.trade_date <= end, LimitUpDaily.limit_type == 'U')).all()
+        by_date = {}
+        for row in rows:
+            by_date.setdefault(row.trade_date, []).append(row)
+        result, prev_codes, prev_ready = [], set(), False
+        for s in all_stats:
+            daily = by_date.get(s.stat_date, [])
+            codes = {r.stock_code for r in daily}
+            ready = len(daily) == s.limit_up
+            rate = round(len(codes & prev_codes) / len(prev_codes) * 100, 1) if ready and prev_ready and prev_codes else None
+            highest = max((r.limit_times or 1 for r in daily), default=0) if ready else None
+            if s.stat_date >= start:
+                result.append({'date': s.stat_date.isoformat(), 'limit_up': s.limit_up,
+                    'limit_down': s.limit_down, 'opened_limit': s.opened_limit,
+                    'break_rate': round(s.opened_limit/(s.limit_up+s.opened_limit)*100,1) if s.limit_up+s.opened_limit else None,
+                    'promote_rate': rate, 'max_board': highest, 'up': s.up, 'down': s.down,
+                    'total_turnover': s.total_turnover})
+            prev_codes, prev_ready = codes, ready
         return result
-
-    # ==================== 内部工具 ====================
 
     def _fetch_pct_live(self, target_date: date, codes: List[str]) -> Dict[str, float]:
         """实时从 Tushare daily 补拉指定日期的涨跌幅（用于早于本地缓存的历史日期）。"""

@@ -46,6 +46,7 @@ const props = defineProps<{
   code: string
   name: string
   industry?: string
+  asOf?: string
 }>()
 
 defineEmits<{
@@ -79,9 +80,9 @@ const chartDisplayRange = computed(() => {
 })
 
 function computeDateRange() {
-  const end = new Date()
+  const end = props.asOf ? new Date(`${props.asOf}T12:00:00`) : new Date()
   // 为了计算 MA20，需要多取约 60 个交易日的历史数据
-  const fetchStart = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
+  const fetchStart = new Date(end.getTime() - 90 * 24 * 60 * 60 * 1000)
   const fmt = (d: Date) => {
     const year = d.getFullYear()
     const month = String(d.getMonth() + 1).padStart(2, '0')
@@ -117,7 +118,7 @@ onMounted(() => {
   if (props.visible) loadData()
 })
 
-watch(() => [props.visible, props.code], ([visible]) => {
+watch(() => [props.visible, props.code, props.asOf], ([visible]) => {
   if (visible) {
     loadData()
   }

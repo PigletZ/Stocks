@@ -6,6 +6,7 @@ import StockDetailView from '../views/StockDetailView.vue'
 import EtfListView from '../views/EtfListView.vue'
 import FinancialAnalysisView from '../views/FinancialAnalysisView.vue'
 import LimitLadderView from '../views/LimitLadderView.vue'
+import ReviewWorkbenchView from '../views/ReviewWorkbenchView.vue'
 import EmotionView from '../views/EmotionView.vue'
 import JournalView from '../views/JournalView.vue'
 import SystemView from '../views/SystemView.vue'
@@ -50,6 +51,12 @@ const router = createRouter({
       name: 'financial',
       component: FinancialAnalysisView,
       meta: { title: '财务分析' },
+    },
+    {
+      path: '/review',
+      name: 'review-workbench',
+      component: ReviewWorkbenchView,
+      meta: { title: '复盘工作台', parent: 'review' },
     },
     {
       path: '/review/ladder',

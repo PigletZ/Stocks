@@ -3,7 +3,8 @@
 import json
 import logging
 from collections import defaultdict, deque
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
+from math import isfinite
 from typing import Dict, List, Optional
 
 from sqlmodel import Session, select, delete
@@ -16,6 +17,23 @@ logger = logging.getLogger(__name__)
 
 class JournalService:
     """复盘日志 / 交易台账服务"""
+
+    @staticmethod
+    def _utc(value):
+        return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
+
+    def _validate_history(self, session, code, replaced_id=None, candidate=None):
+        rows = list(session.exec(select(TradeJournal).where(TradeJournal.stock_code == code)).all())
+        rows = [r for r in rows if r.id != replaced_id]
+        if candidate is not None and candidate.stock_code == code:
+            rows.append(candidate)
+        qty = 0
+        for row in sorted(rows, key=lambda r: (self._utc(r.traded_at), r.id or 2**63)):
+            if row.direction not in ('buy', 'sell') or not isfinite(row.price) or row.price <= 0 or row.quantity <= 0 or not isfinite(row.fee) or row.fee < 0:
+                raise ValueError("交易方向、正价格/数量和非负费用必须有效")
+            qty += row.quantity if row.direction == 'buy' else -row.quantity
+            if qty < 0:
+                raise ValueError("该操作会使历史持仓出现超卖，请先补齐真实买入记录")
 
     # ==================== 复盘笔记 ====================
 
@@ -86,9 +104,9 @@ class JournalService:
         if code:
             stmt = stmt.where(TradeJournal.stock_code == code)
         if start:
-            stmt = stmt.where(TradeJournal.traded_at >= datetime.combine(start, datetime.min.time()))
+            stmt = stmt.where(TradeJournal.traded_at >= datetime.combine(start, datetime.min.time()) - timedelta(hours=8))
         if end:
-            stmt = stmt.where(TradeJournal.traded_at <= datetime.combine(end, datetime.max.time()))
+            stmt = stmt.where(TradeJournal.traded_at <= datetime.combine(end, datetime.max.time()) - timedelta(hours=8))
         trades = session.exec(stmt).all()
         names = self._stock_names(session, {t.stock_code for t in trades})
         return [self._trade_item(t, names.get(t.stock_code, "")) for t in trades]
@@ -108,19 +126,16 @@ class JournalService:
             raise ValueError("direction 必须是 buy 或 sell")
         if price <= 0 or quantity <= 0:
             raise ValueError("价格和数量必须大于 0")
-        if direction == "sell":
-            holding = self._position_before(session, stock_code, traded_at)
-            if quantity > holding:
-                raise ValueError(f"卖出数量 {quantity} 超过该时点持仓 {holding}")
         trade = TradeJournal(
             stock_code=stock_code,
             direction=direction,
             price=price,
             quantity=quantity,
             fee=fee,
-            traded_at=traded_at,
+            traded_at=self._utc(traded_at),
             note=note,
         )
+        self._validate_history(session, stock_code, candidate=trade)
         session.add(trade)
         session.commit()
         session.refresh(trade)
@@ -131,9 +146,15 @@ class JournalService:
         trade = session.get(TradeJournal, trade_id)
         if not trade:
             return None
+        candidate = TradeJournal(**trade.model_dump())
         for k in ("stock_code", "direction", "price", "quantity", "fee", "traded_at", "note"):
             if k in fields and fields[k] is not None:
-                setattr(trade, k, fields[k])
+                setattr(candidate, k, fields[k])
+        candidate.traded_at = self._utc(candidate.traded_at)
+        for code in {trade.stock_code, candidate.stock_code}:
+            self._validate_history(session, code, trade_id, candidate)
+        for k in ("stock_code", "direction", "price", "quantity", "fee", "traded_at", "note"):
+            setattr(trade, k, getattr(candidate, k))
         session.add(trade)
         session.commit()
         session.refresh(trade)
@@ -144,21 +165,22 @@ class JournalService:
         trade = session.get(TradeJournal, trade_id)
         if not trade:
             return False
+        self._validate_history(session, trade.stock_code, trade_id)
         session.delete(trade)
         session.commit()
         return True
 
     def list_trade_dates(self, year: int, month: int, session: Session) -> List[str]:
         """指定月份有交易的日期列表（日历标记用）"""
-        start = datetime(year, month, 1)
-        end = datetime(year + (month == 12), month % 12 + 1, 1)
+        start = datetime(year, month, 1) - timedelta(hours=8)
+        end = datetime(year + (month == 12), month % 12 + 1, 1) - timedelta(hours=8)
         rows = session.exec(
             select(TradeJournal.traded_at).where(
                 TradeJournal.traded_at >= start,
                 TradeJournal.traded_at < end,
             )
         ).all()
-        return sorted({d.date().isoformat() for d in rows})
+        return sorted({(d + timedelta(hours=8)).date().isoformat() for d in rows})
 
     # ==================== 持仓与盈亏（FIFO） ====================
 
@@ -189,9 +211,11 @@ class JournalService:
                         lots[t.stock_code].popleft()
                 if remain > 0:
                     # 数据不完整（历史买入未录入），超出部分按 0 成本计
-                    pnl += t.price * remain
+                    realized[t.stock_code] = None
+                    pnl = None
                     logger.warning("交易台账 %s 卖出超出已记录持仓 %d 股", t.stock_code, remain)
-                realized[t.stock_code] += pnl
+                if realized[t.stock_code] is not None and pnl is not None:
+                    realized[t.stock_code] += pnl
                 sell_pnls.append(pnl)
         return lots, realized, sell_pnls
 
@@ -219,7 +243,7 @@ class JournalService:
                 result[code] = {
                     "quantity": qty,
                     "cost_price": round(cost, 3),
-                    "realized_pnl": round(realized.get(code, 0.0), 2),
+                    "realized_pnl": round(realized.get(code, 0.0), 2) if realized.get(code, 0.0) is not None else None,
                 }
         return result
 
@@ -253,15 +277,17 @@ class JournalService:
         """整体盈亏统计"""
         trades = session.exec(select(TradeJournal)).all()
         _, realized, sell_pnls = self._fifo_compute(trades)
-        total_realized = sum(realized.values())
-        wins = sum(1 for p in sell_pnls if p > 0)
-        losses = sum(1 for p in sell_pnls if p <= 0)
+        total_realized = sum(realized.values()) if all(v is not None for v in realized.values()) else None
+        valid = [p for p in sell_pnls if p is not None]
+        wins = sum(1 for p in valid if p > 0)
+        losses = sum(1 for p in valid if p <= 0)
         total_fee = sum(t.fee for t in trades)
         return {
-            "total_realized": round(total_realized, 2),
+            "total_realized": round(total_realized, 2) if total_realized is not None else None,
+            "incomplete_sell_count": len(sell_pnls) - len(valid),
             "win_count": wins,
             "loss_count": losses,
-            "win_rate": round(wins / len(sell_pnls) * 100, 1) if sell_pnls else None,
+            "win_rate": round(wins / len(valid) * 100, 1) if valid else None,
             "sell_count": len(sell_pnls),
             "buy_count": sum(1 for t in trades if t.direction == "buy"),
             "total_fee": round(total_fee, 2),
@@ -301,6 +327,6 @@ class JournalService:
             "quantity": t.quantity,
             "amount": round(t.price * t.quantity, 2),
             "fee": t.fee,
-            "traded_at": t.traded_at.isoformat(),
+            "traded_at": t.traded_at.replace(tzinfo=timezone.utc).isoformat(),
             "note": t.note,
         }

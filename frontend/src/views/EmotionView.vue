@@ -41,7 +41,7 @@
         </div>
         <div class="stat-card">
           <div class="stat-label">最高板</div>
-          <div class="stat-value up">{{ latest.max_board }} 板</div>
+          <div class="stat-value up">{{ latest.max_board == null ? '—' : latest.max_board }} 板</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">两市成交额</div>
@@ -57,7 +57,7 @@
 
       <!-- 炸板率/晋级率 -->
       <div class="panel">
-        <div class="panel-title">炸板率与晋级率（短线赚钱效应）</div>
+        <div class="panel-title">炸板率与涨停延续率（价格状态统计，不代表实际收益）</div>
         <div ref="rateChart" class="chart"></div>
       </div>
     </template>
@@ -66,10 +66,14 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import * as echarts from 'echarts'
 import { fetchEmotionSeries, type EmotionItem } from '../api/client'
 
 const items = ref<EmotionItem[]>([])
+const route = useRoute()
+const endDate = typeof route.query.date === 'string' ? route.query.date : new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Shanghai'}).format(new Date())
+let requestId = 0
 const loading = ref(false)
 const error = ref('')
 const activeRange = ref('近三月')
@@ -127,7 +131,7 @@ function renderCharts() {
   const dates = items.value.map((i) => i.date)
 
   countInstance.setOption(
-    baseOption(dates, [
+    { ...baseOption(dates, [
       {
         name: '涨停数',
         type: 'line',
@@ -147,11 +151,15 @@ function renderCharts() {
       {
         name: '最高板',
         type: 'bar',
+        yAxisIndex: 1,
         data: items.value.map((i) => i.max_board),
         itemStyle: { color: '#f59e0b', opacity: 0.6 },
         barMaxWidth: 6,
       },
-    ])
+    ]), yAxis: [
+      { type: 'value', name: '家', axisLabel: {color: '#9ca3af'}, splitLine: {lineStyle: {color: '#374151'}} },
+      { type: 'value', name: '板', min:0, minInterval:1, axisLabel: {color: '#9ca3af'}, splitLine: {show:false} }
+    ], grid: {left:50,right:45,top:30,bottom:40} }
   )
 
   rateInstance.setOption(
@@ -181,6 +189,7 @@ function renderCharts() {
 }
 
 async function load(start?: string, end?: string) {
+  const request = ++requestId
   // loading 期间图表容器会被 v-if 卸载，必须先销毁绑在旧 DOM 上的实例
   countInstance?.dispose()
   countInstance = null
@@ -189,13 +198,17 @@ async function load(start?: string, end?: string) {
   loading.value = true
   error.value = ''
   try {
-    items.value = await fetchEmotionSeries(start, end)
+    const result = await fetchEmotionSeries(start, end)
+    if (request !== requestId) return
+    items.value = result
   } catch (err: any) {
+    if (request !== requestId) return
     error.value = err?.response?.data?.detail || '加载失败'
   } finally {
     // 必须先置回 false 让图表容器挂载（v-else），再渲染图表
-    loading.value = false
+    if (request === requestId) loading.value = false
   }
+  if (request !== requestId) return
   await nextTick()
   renderCharts()
 }
@@ -203,11 +216,11 @@ async function load(start?: string, end?: string) {
 function setQuickRange(range: { label: string; days: number }) {
   activeRange.value = range.label
   if (range.days === 0) {
-    load('2024-01-02', formatDate(new Date()))
+    load('2024-01-02', endDate)
   } else {
-    const end = new Date()
-    const start = new Date(Date.now() - range.days * 24 * 60 * 60 * 1000)
-    load(formatDate(start), formatDate(end))
+    const end = new Date(`${endDate}T12:00:00`)
+    const start = new Date(end.getTime() - range.days * 24 * 60 * 60 * 1000)
+    load(formatDate(start), endDate)
   }
 }
 

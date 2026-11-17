@@ -14,6 +14,7 @@
     <div v-if="loading" class="loading-text">加载中...</div>
 
     <template v-else>
+      <p v-if="perf.ready === false" class="loading-text">当日或对比日明细尚未齐备，延续率不计算；缺失报价标为未知。</p>
       <!-- 昨日涨停表现统计 -->
       <div v-if="perf.stats.total" class="stats-row">
         <div class="stat-card">
@@ -22,8 +23,8 @@
         </div>
         <div class="stat-card">
           <div class="stat-label">晋级率</div>
-          <div class="stat-value" :class="perf.stats.promote_rate >= 30 ? 'up' : ''">
-            {{ perf.stats.promote_rate }}%
+          <div class="stat-value" :class="(perf.stats.promote_rate ?? 0) >= 30 ? 'up' : ''">
+            {{ perf.stats.promote_rate == null ? '—' : perf.stats.promote_rate + '%' }}
           </div>
         </div>
         <div class="stat-card">
@@ -35,9 +36,9 @@
         <div class="stat-card">
           <div class="stat-label">晋级 / 炸板 / 跌停</div>
           <div class="stat-value">
-            <span class="up">{{ perf.stats.promoted }}</span> /
-            <span class="warn">{{ perf.stats.opened }}</span> /
-            <span class="down">{{ perf.stats.limit_down }}</span>
+            <span class="up">{{ perf.stats.promoted ?? '—' }}</span> /
+            <span class="warn">{{ perf.stats.opened ?? '—' }}</span> /
+            <span class="down">{{ perf.stats.limit_down ?? '—' }}</span>
           </div>
         </div>
       </div>
@@ -105,6 +106,7 @@
       :visible="detail.visible"
       :code="detail.code"
       :name="detail.name"
+      :as-of="selectedDate || ladder.trade_date || undefined"
       @close="detail.visible = false"
     />
   </div>

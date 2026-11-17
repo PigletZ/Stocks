@@ -119,7 +119,10 @@ def create_trade(body: TradeIn, session: Session = Depends(get_session)):
 @router.put("/trades/{trade_id}")
 def update_trade(trade_id: int, body: TradeUpdate, session: Session = Depends(get_session)):
     service = JournalService()
-    result = service.update_trade(trade_id, session, **body.model_dump(exclude_unset=True))
+    try:
+        result = service.update_trade(trade_id, session, **body.model_dump(exclude_unset=True))
+    except ValueError as error:
+        raise HTTPException(400, str(error))
     if result is None:
         raise HTTPException(status_code=404, detail="交易记录不存在")
     return result
@@ -128,7 +131,11 @@ def update_trade(trade_id: int, body: TradeUpdate, session: Session = Depends(ge
 @router.delete("/trades/{trade_id}")
 def delete_trade(trade_id: int, session: Session = Depends(get_session)):
     service = JournalService()
-    if not service.delete_trade(trade_id, session):
+    try:
+        deleted = service.delete_trade(trade_id, session)
+    except ValueError as error:
+        raise HTTPException(400, str(error))
+    if not deleted:
         raise HTTPException(status_code=404, detail="交易记录不存在")
     return {"message": "已删除"}
 
