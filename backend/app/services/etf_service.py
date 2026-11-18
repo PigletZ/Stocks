@@ -1,14 +1,11 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional
-import logging
 
 import pandas as pd
-import tushare as ts
 
 from ..config import settings
-
-
-logger = logging.getLogger(__name__)
+from .etf_cache import EtfFrameCache
+from .tushare_client import TushareClient, TushareError
 
 
 # ETF 品类规则：按优先级从高到低匹配，命中即返回
@@ -160,21 +157,49 @@ def _extract_category(name: str, benchmark: str) -> str:
 class EtfService:
     """ETF 数据服务"""
 
-    def __init__(self):
+    def __init__(self, cache_dir=None):
         self._tushare_pro = None
-        self._etf_list_cache: Optional[pd.DataFrame] = None
-        self._etf_list_cache_time: Optional[datetime] = None
-        self._daily_cache = {}
+        self._frame_cache = EtfFrameCache(cache_dir)
+        self._cache_fallbacks = {}
+
+    def begin_request(self):
+        self._cache_fallbacks = {}
+
+    def cache_fallbacks(self):
+        return list(self._cache_fallbacks.values())
+
+    def _cached_frame(self, key, resource, ttl, fetch, normalize, allow_empty=False):
+        cached = self._frame_cache.get(key)
+        if cached is not None:
+            try:
+                cached = (cached[0], normalize(cached[1]))
+            except (ValueError, KeyError, TypeError):
+                cached = None
+        if cached is not None:
+            age = (datetime.now(timezone.utc) - cached[0]).total_seconds()
+            if 0 <= age < ttl:
+                return cached[1]
+        try:
+            frame = fetch()
+            if allow_empty and frame is not None and frame.empty and cached is None:
+                return pd.DataFrame()
+            frame = normalize(frame)
+        except Exception as error:
+            if cached is not None:
+                self._cache_fallbacks[key] = {"resource": resource, "fetched_at": cached[0].isoformat()}
+                return cached[1]
+            reason = str(error) if isinstance(error, TushareError) else "接口未返回完整有效的数据"
+            raise RuntimeError(f"{resource}获取失败：{reason}；暂无可用缓存，请稍后重试") from None
+        self._frame_cache.put(key, frame)
+        return frame
 
     def _get_tushare_pro(self):
         """使用 Tushare token 初始化 Pro 接口"""
         if not hasattr(self, "_tushare_pro") or self._tushare_pro is None:
             token = settings.tushare_token
             if not token:
-                raise RuntimeError(
-                    "Tushare token 未配置，请检查 /etc/kimi/stocks/base.conf 中的 [tushare]"
-                )
-            self._tushare_pro = ts.pro_api(token)
+                raise TushareError("Tushare token 未配置，请检查服务端配置")
+            self._tushare_pro = TushareClient(token)
         return self._tushare_pro
 
     @staticmethod
@@ -183,18 +208,37 @@ class EtfService:
         return ts_code.split(".")[0] if ts_code else ""
 
     def _fetch_trade_dates(self, start: date, end: date) -> List[date]:
-        """获取 A 股交易日列表（ETF 与 A 股交易日一致）"""
-        try:
-            df = self._get_tushare_pro().trade_cal(
-                exchange="SSE",
-                start_date=start.strftime("%Y%m%d"),
-                end_date=end.strftime("%Y%m%d"),
+        """按年缓存官方日历；仅使用覆盖完整所需区间的缓存。"""
+        dates = []
+        for year in range(start.year, end.year + 1):
+            first, last = max(start, date(year, 1, 1)), min(end, date(year, 12, 31))
+
+            def normalize(frame):
+                if frame is None or frame.empty or not {"cal_date", "is_open"}.issubset(frame.columns):
+                    raise ValueError("empty calendar")
+                frame = frame.copy()
+                if "exchange" in frame:
+                    frame = frame[frame["exchange"] == "SSE"]
+                parsed = pd.to_datetime(frame["cal_date"].astype(str), format="%Y%m%d", errors="raise")
+                frame["cal_date"] = parsed.dt.strftime("%Y%m%d")
+                frame = frame[parsed.dt.year == year].copy()
+                frame["is_open"] = pd.to_numeric(frame["is_open"], errors="coerce")
+                expected = set(pd.date_range(first, last).strftime("%Y%m%d"))
+                if (not frame["is_open"].isin([0, 1]).all() or frame["cal_date"].duplicated().any()
+                        or not expected.issubset(set(frame["cal_date"]))):
+                    raise ValueError("incomplete calendar")
+                return frame[["cal_date", "is_open"]]
+
+            frame = self._cached_frame(
+                f"calendar-{year}", f"{year} 年交易日历", 86400,
+                lambda: self._get_tushare_pro().trade_cal(
+                    exchange="SSE", start_date=f"{year}0101", end_date=f"{year}1231",
+                    fields="exchange,cal_date,is_open"),
+                normalize,
             )
-            df = df[df["is_open"] == 1]
-            dates = sorted(df["cal_date"].astype(str).tolist())
-            return [datetime.strptime(d, "%Y%m%d").date() for d in dates]
-        except Exception as error:
-            raise RuntimeError("交易日历获取失败，无法准确计算交易日涨幅") from error
+            dates.extend(datetime.strptime(day, "%Y%m%d").date()
+                         for day in frame.loc[frame["is_open"] == 1, "cal_date"])
+        return sorted(day for day in dates if start <= day <= end)
 
     def _get_previous_trade_date(self, target_date: date) -> Optional[date]:
         """获取 target_date 之前最近的一个交易日"""
@@ -210,54 +254,38 @@ class EtfService:
 
     def _fetch_etf_basic_list(self) -> pd.DataFrame:
         """从 Tushare 获取 ETF 基础列表"""
-        try:
-            df = self._get_tushare_pro().fund_basic(market="E")
-            if df is None or df.empty:
-                return pd.DataFrame()
+        def normalize(df):
+            if df is None or df.empty or not {"name", "ts_code", "status"}.issubset(df.columns):
+                raise ValueError("empty fund basics")
             df = df.copy()
             df = df[df["name"].fillna("").str.upper().str.contains("ETF", regex=False)]
-            if "status" in df:
-                df = df[df["status"] == "L"]
+            df = df[df["status"] == "L"]
+            if df.empty:
+                raise ValueError("missing listed ETFs")
             df["code"] = df["ts_code"].astype(str).apply(self._ts_code_to_code)
             return df
-        except Exception as e:
-            logger.warning("获取 ETF 基础列表失败: %s", e)
-            return pd.DataFrame()
+        return self._cached_frame("basic", "ETF 基础资料", 3600,
+                                  lambda: self._get_tushare_pro().fund_basic(market="E"), normalize)
 
     def _fetch_etf_daily_for_date(self, target_date: date) -> pd.DataFrame:
         """从 Tushare 获取指定交易日的全市场 ETF 日线"""
-        cached = self._daily_cache.get(target_date)
-        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 300:
-            return cached[1].copy()
-        try:
-            date_str = target_date.strftime("%Y%m%d")
-            df = self._get_tushare_pro().fund_daily(trade_date=date_str)
-            if df is None or df.empty:
-                return pd.DataFrame()
+        date_str = target_date.strftime("%Y%m%d")
+
+        def normalize(df):
+            if df is None or df.empty or not {"ts_code", "trade_date", "close", "pct_chg", "amount"}.issubset(df.columns):
+                raise ValueError("empty fund quotes")
+            if not df["trade_date"].astype(str).eq(date_str).all():
+                raise ValueError("incorrect quote date")
             df = df.copy()
             df["code"] = df["ts_code"].astype(str).apply(self._ts_code_to_code)
-            self._daily_cache[target_date] = (datetime.utcnow(), df.copy())
-            if len(self._daily_cache) > 100:
-                del self._daily_cache[next(iter(self._daily_cache))]
             return df
-        except Exception as e:
-            logger.warning("获取 ETF 日线 %s 失败: %s", target_date, e)
-            return pd.DataFrame()
+        return self._cached_frame(f"daily-{date_str}", f"ETF 日线 {target_date.isoformat()}", 300,
+                                  lambda: self._get_tushare_pro().fund_daily(trade_date=date_str),
+                                  normalize, allow_empty=True)
 
     def _get_etf_list_with_cache(self) -> pd.DataFrame:
-        """获取 ETF 基础列表，带 1 小时内存缓存"""
-        now = datetime.utcnow()
-        if (
-            self._etf_list_cache is not None
-            and self._etf_list_cache_time is not None
-            and (now - self._etf_list_cache_time).total_seconds() < 3600
-        ):
-            return self._etf_list_cache
-
-        df = self._fetch_etf_basic_list()
-        self._etf_list_cache = df
-        self._etf_list_cache_time = now
-        return df
+        """基础资料缓存 1 小时；上游故障时保留成功获取的旧资料。"""
+        return self._fetch_etf_basic_list()
 
     def fetch_etf_list(
         self,

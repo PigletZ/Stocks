@@ -487,6 +487,7 @@ export interface EtfDirection {
 export interface EtfDashboard {
   target_date: string; effective_date: string; base_dates: Record<string, string | null>
   min_amount: number; quoted_count: number; items: EtfObservation[]; directions: EtfDirection[]; missing_windows: number[]
+  cache_fallbacks: { resource: string; fetched_at: string }[]
 }
 export async function fetchEtfDashboard(date: string, minAmount: number, signal?: AbortSignal): Promise<EtfDashboard> {
   const { data } = await api.get('/etfs/dashboard', { params: { date, min_amount: minAmount }, signal, timeout: 120000 })

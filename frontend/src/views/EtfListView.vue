@@ -5,6 +5,7 @@
     <p v-if="loading" class="notice">正在读取交易日历及多周期行情，首次加载可能较慢。</p>
     <template v-if="data && !loading">
       <div class="status">实际数据 {{ data.effective_date }}<span v-if="data.effective_date !== data.target_date"> · 所选 {{ data.target_date }} 无行情，已回退</span> · {{ data.quoted_count }} 只有效报价 / {{ data.items.length }} 只符合门槛（成交额 ≥ {{ amount(data.min_amount) }}）</div>
+      <p v-if="data.cache_fallbacks?.length" class="notice" role="status">数据接口暂不可用或返回不完整，以下资料使用已有缓存，行情日期见上方：<span v-for="(entry, index) in data.cache_fallbacks" :key="entry.resource">{{ index ? '；' : '' }}{{ entry.resource }}（缓存于 {{ cacheTime(entry.fetched_at) }}）</span>。</p>
       <div class="guide"><p>方向强弱使用同类 ETF 的价格涨幅中位数，避免榜单被同一方向的多只基金占满。</p><small>分类由名称和基准关键词推断，同类不一定跟踪同一指数。成交额仅表示活跃程度，不是资金净流入。涨幅未复权，分红、拆分可能影响结果；不含溢价、费率和跟踪误差。</small></div>
       <p v-if="data.missing_windows.length" class="notice">{{ data.missing_windows.join('、') }} 日基准数据缺失，相关指标留空。</p>
       <section class="panel"><div class="section-header"><div><h2>方向强弱</h2><small>按 5 日价格涨幅中位数排序 · 正涨样本 / 有效样本</small></div><div><button :class="{active: directionMode === 'up'}" @click="directionMode='up'">领涨</button><button :class="{active: directionMode === 'down'}" @click="directionMode='down'">领跌</button></div></div>
@@ -43,7 +44,8 @@ const pages=computed(()=>Math.max(1,Math.ceil(rows.value.length/30)))
 const visibleRows=computed(()=>rows.value.slice((page.value-1)*30,page.value*30))
 const compareRows=computed(()=>data.value?.items.filter(r=>compared.value.includes(r.code)) || [])
 watch([search,category,state,sort,mode,watched],()=>page.value=1)
-async function load(){controller?.abort();const request=new AbortController();controller=request;loading.value=true;error.value='';try{const result=await fetchEtfDashboard(date.value,minAmount.value,request.signal);if(request.signal.aborted)return;data.value=result;page.value=1;if(!result.items.some(r=>r.category===category.value))category.value=''}catch(e:any){if(!request.signal.aborted)error.value=e?.response?.data?.detail || 'ETF 数据加载失败，请稍后重试。'}finally{if(controller===request)loading.value=false}}
+async function load(){controller?.abort();const request=new AbortController();controller=request;loading.value=true;error.value='';try{const result=await fetchEtfDashboard(date.value,minAmount.value,request.signal);if(request.signal.aborted)return;data.value=result;page.value=1;if(!result.items.some(r=>r.category===category.value))category.value=''}catch(e:any){if(!request.signal.aborted){data.value=null;error.value=e?.response?.data?.detail || 'ETF 数据加载失败，请稍后重试。'}}finally{if(controller===request)loading.value=false}}
+function cacheTime(value:string){return new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(value))}
 function toggleWatch(code:string){watched.value=watched.value.includes(code)?watched.value.filter(c=>c!==code):[...watched.value,code];try{localStorage.setItem('stocks_etf_observations',JSON.stringify(watched.value));storageError.value=''}catch{storageError.value='浏览器无法保存观察列表，本次选择仅在当前页面有效。'}}
 function toggleCompare(code:string){compared.value=compared.value.includes(code)?compared.value.filter(c=>c!==code):compared.value.length<3?[...compared.value,code]:compared.value}
 function pct(v:number|null){return v==null?'—':`${v>0?'+':''}${v.toFixed(2)}%`}

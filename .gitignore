@@ -8,6 +8,7 @@ __pycache__/
 .env
 *.sqlite3
 *.db
+.cache/
 
 # Node
 node_modules/

@@ -15,17 +15,23 @@ def _number(value):
 
 
 def build_dashboard(service, target_date=None, min_amount=10000000):
+    service.begin_request()
     target = target_date or datetime.now(timezone(timedelta(hours=8))).date()
     dates = service._fetch_trade_dates(target - timedelta(days=100), target)
     effective = None
     end = None
+    daily_error = None
     for day in reversed(dates[-6:]):
-        frame = service._fetch_etf_daily_for_date(day)
+        try:
+            frame = service._fetch_etf_daily_for_date(day)
+        except RuntimeError as error:
+            daily_error = str(error)
+            continue
         if not frame.empty:
             effective, end = day, frame
             break
     if effective is None:
-        raise RuntimeError("近期 ETF 日线尚未发布或获取失败，请稍后重试")
+        raise RuntimeError(daily_error or "近期 ETF 日线尚未发布或获取失败，请稍后重试")
     basic = service._get_etf_list_with_cache()
     if basic.empty:
         raise RuntimeError("ETF 基础资料获取失败，请稍后重试")
@@ -34,11 +40,16 @@ def build_dashboard(service, target_date=None, min_amount=10000000):
     base_dates = {}
     for window in (2, 5, 10, 20):
         day = dates[position-window] if position >= window else None
-        frame = service._fetch_etf_daily_for_date(day) if day else None
+        try:
+            frame = service._fetch_etf_daily_for_date(day) if day else None
+        except RuntimeError:
+            frame = None
         bases[window] = {str(r["code"]): _number(r.get("close")) for r in frame.to_dict("records")} if frame is not None else {}
         base_dates[str(window)] = day.isoformat() if day else None
-    return summarize(basic.to_dict("records"), end.to_dict("records"), bases,
-                     target.isoformat(), effective.isoformat(), base_dates, min_amount)
+    result = summarize(basic.to_dict("records"), end.to_dict("records"), bases,
+                       target.isoformat(), effective.isoformat(), base_dates, min_amount)
+    result["cache_fallbacks"] = service.cache_fallbacks()
+    return result
 
 
 def summarize(basic, daily, bases, target, effective, base_dates, min_amount):

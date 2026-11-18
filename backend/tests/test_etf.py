@@ -52,6 +52,7 @@ class EtfTests(unittest.TestCase):
         target = date(2026, 11, 16)
         days = [target-timedelta(days=i) for i in range(40)][::-1]
         service = Mock()
+        service.cache_fallbacks.return_value = []
         service._fetch_trade_dates.return_value = days
         def daily(day):
             self.assertLessEqual(day, target)
