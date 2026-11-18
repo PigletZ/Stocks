@@ -1,4 +1,5 @@
 import os
+import tempfile
 import unittest
 from datetime import date, timedelta
 from unittest.mock import patch, Mock
@@ -64,10 +65,11 @@ class EtfTests(unittest.TestCase):
         self.assertEqual(result['target_date'], target.isoformat())
 
     def test_calendar_failure_does_not_invent_weekday_trading_days(self):
-        service = EtfService()
-        with patch.object(service, '_get_tushare_pro', side_effect=RuntimeError('offline')):
-            with self.assertRaises(RuntimeError):
-                service._fetch_trade_dates(date(2026, 1, 1), date(2026, 1, 5))
+        with tempfile.TemporaryDirectory() as cache_dir:
+            service = EtfService(cache_dir=cache_dir)
+            with patch.object(service, '_get_tushare_pro', side_effect=RuntimeError('offline')):
+                with self.assertRaises(RuntimeError):
+                    service._fetch_trade_dates(date(2026, 1, 1), date(2026, 1, 5))
 
 
 if __name__ == '__main__':

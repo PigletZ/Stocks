@@ -4,7 +4,7 @@
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <p v-if="loading" class="notice">正在读取交易日历及多周期行情，首次加载可能较慢。</p>
     <template v-if="data && !loading">
-      <div class="status">实际数据 {{ data.effective_date }}<span v-if="data.effective_date !== data.target_date"> · 所选 {{ data.target_date }} 无行情，已回退</span> · {{ data.quoted_count }} 只有效报价 / {{ data.items.length }} 只符合门槛（成交额 ≥ {{ amount(data.min_amount) }}）</div>
+      <div class="status">实际数据 {{ data.effective_date }}<span v-if="data.effective_date !== data.target_date"> · 所选 {{ data.target_date }} 暂未取得行情，显示最近可用数据</span> · {{ data.quoted_count }} 只有效报价 / {{ data.items.length }} 只符合门槛（成交额 ≥ {{ amount(data.min_amount) }}）</div>
       <p v-if="data.cache_fallbacks?.length" class="notice" role="status">数据接口暂不可用或返回不完整，以下资料使用已有缓存，行情日期见上方：<span v-for="(entry, index) in data.cache_fallbacks" :key="entry.resource">{{ index ? '；' : '' }}{{ entry.resource }}（缓存于 {{ cacheTime(entry.fetched_at) }}）</span>。</p>
       <div class="guide"><p>方向强弱使用同类 ETF 的价格涨幅中位数，避免榜单被同一方向的多只基金占满。</p><small>分类由名称和基准关键词推断，同类不一定跟踪同一指数。成交额仅表示活跃程度，不是资金净流入。涨幅未复权，分红、拆分可能影响结果；不含溢价、费率和跟踪误差。</small></div>
       <p v-if="data.missing_windows.length" class="notice">{{ data.missing_windows.join('、') }} 日基准数据缺失，相关指标留空。</p>
