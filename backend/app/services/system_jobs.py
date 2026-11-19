@@ -111,14 +111,14 @@ def job_statuses(now, log_dir, store=None, discovered=None):
     for job in JOBS:
         record = store.read(f"job-{job['key']}")
         item = {**job, "schedules": schedules[job["key"]], "schedule_known": known,
-                "next_run": min((plan["next"] for plan in schedules[job["key"]] if plan["next"]), default=None),
+                "next_run": min((plan["next"] for plan in schedules[job["key"]] if plan["next"]), default=None, key=datetime.fromisoformat),
                 "last_run": None, "status": "missing", "message": "尚无结构化执行记录，下一次任务执行后开始记录",
                 "log_updated_at": None, "log_excerpt": [], "record": record}
         log = Path(log_dir) / job["log"]
         if log.exists():
-            from datetime import timezone
-            item["log_updated_at"] = datetime.fromtimestamp(log.stat().st_mtime, timezone.utc).isoformat()
             try:
+                from datetime import timezone
+                item["log_updated_at"] = datetime.fromtimestamp(log.stat().st_mtime, timezone.utc).isoformat()
                 with log.open("rb") as handle:
                     handle.seek(0, 2)
                     handle.seek(max(0, handle.tell()-4096))
@@ -133,7 +133,7 @@ def job_statuses(now, log_dir, store=None, discovered=None):
             item.update(status=record.get("status", "unknown"), last_run=record.get("started_at"), message=redact(record.get("message", "")))
             if item["status"] == "running" and not process_alive(record):
                 item.update(status="interrupted", message="进程已退出，但没有完成记录；可能被终止或发生崩溃")
-            previous = max((plan["previous"] for plan in schedules[job["key"]] if plan["previous"]), default=None)
+            previous = max((plan["previous"] for plan in schedules[job["key"]] if plan["previous"]), default=None, key=datetime.fromisoformat)
             try:
                 if (item["status"] in {"success", "skipped"} and previous
                         and datetime.fromisoformat(record["started_at"]) < datetime.fromisoformat(previous)

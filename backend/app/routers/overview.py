@@ -49,7 +49,10 @@ def get_market_history(
     end_date = _parse_date(end)
     start_date = _parse_date(start) if start else end_date - timedelta(days=6)
     service = OverviewService()
-    return service.fetch_market_history(start_date, end_date, session)
+    try:
+        return service.fetch_market_history(start_date, end_date, session)
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error))
 
 
 @router.get("/daily-overview")
@@ -85,7 +88,10 @@ def get_trade_dates(
     end_date = _parse_date(end)
     start_date = _parse_date(start) if start else end_date - timedelta(days=30)
     service = OverviewService()
-    dates = service.fetch_trade_dates(start_date, end_date)
+    try:
+        dates = service.fetch_trade_dates(start_date, end_date)
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error))
     return [d.isoformat() for d in dates]
 
 

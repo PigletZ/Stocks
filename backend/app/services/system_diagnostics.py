@@ -1,5 +1,6 @@
 """按用户请求检查 Tushare；常规状态刷新不触发远程调用。"""
 from concurrent.futures import ThreadPoolExecutor
+import math
 from datetime import datetime, timedelta, timezone
 from threading import Lock
 from time import monotonic
@@ -75,6 +76,14 @@ class SystemDiagnostics:
                     else:
                         frame = getattr(client, api)(**arguments)
                         if frame is not None and not frame.empty and date_field in frame:
+                            sample = frame.iloc[0]
+                            sample_day = datetime.strptime(str(sample[date_field]), "%Y%m%d").date()
+                            if sample_day > today or str(sample.get("ts_code")) != arguments["ts_code"]:
+                                raise ValueError("invalid sample identity or date")
+                            if key in {"stocks", "indices", "etf"}:
+                                close = float(sample.get("close"))
+                                if not math.isfinite(close) or close <= 0:
+                                    raise ValueError("invalid sample price")
                             result.update(status="ok", message="接口采样成功；不代表全市场数据已同步齐全", sample_date=str(frame.iloc[0][date_field]))
                         else:
                             result.update(status="unknown", kind="empty", message="接口可达但未返回样本，数据可用性待核验")

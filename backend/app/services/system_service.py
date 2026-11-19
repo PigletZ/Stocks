@@ -214,7 +214,7 @@ class SystemService:
                 return result
             age = (self.now-datetime.fromisoformat(manifest["created_at"])).total_seconds()
             result.update({key: manifest.get(key) for key in ("created_at", "verified_at", "size_bytes", "filename")})
-            result.update(status="ok" if 0 <= age <= 48*3600 else "warning", message="最近备份已通过 SQLite quick_check；当前未自动推断备份计划" if age <= 48*3600 else "最近备份已超过 48 小时，建议更新")
+            result.update(status="ok" if 0 <= age <= 48*3600 else "warning", message="最近备份已通过一致性校验，文件信息与记录一致" if 0 <= age <= 48*3600 else "备份时间异常或已超过 48 小时，建议核对并更新")
             return result
         except (OSError, KeyError, TypeError, ValueError):
             result.update(status="warning", message="备份记录或文件无法核验")

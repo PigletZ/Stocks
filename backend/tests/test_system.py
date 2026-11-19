@@ -20,6 +20,7 @@ with patch.dict(os.environ, {"AUTH_USERNAME": "test-user", "AUTH_PASSWORD": "tes
     from app.services.system_jobs import JOBS, discover_schedules, job_statuses, schedule_times
     from app.services.system_service import SystemService, expected_trade_date
     from app.services.tushare_client import TushareError
+    from app.services.tushare_client import TushareClient
     from app.services.tushare_stock_service import TushareStockService
     from app.services.overview_service import OverviewService
     from app.services.financial_service import FinancialService
@@ -116,6 +117,14 @@ class SystemTests(unittest.TestCase):
         self.assertEqual(get_preferences(self.store).request_timeout, 10)
         self.assertEqual(self.service._configuration()['preferences_status'], 'error')
 
+    def test_saved_timeout_is_applied_to_subsequent_requests(self):
+        save_preferences(SystemPreferences(request_timeout=20), self.store)
+        response = Mock(status_code=200)
+        response.json.return_value = {'code':0, 'data':{'fields':[], 'items':[]}}
+        with patch('app.services.tushare_client.requests.post', return_value=response) as post:
+            TushareClient('test-token').daily()
+        self.assertEqual(post.call_args.kwargs['timeout'], 20)
+
     def test_job_counts_partial_failure_and_redacts_credentials(self):
         with patch('app.services.runtime_state.settings.tushare_token', 'private-token-for-test'):
             run = JobRun('quotes', self.store)
@@ -138,6 +147,16 @@ class SystemTests(unittest.TestCase):
         saved = self.store.read('job-daily')
         self.assertEqual(saved['status'], 'error')
         self.assertEqual(saved['failed'], 1)
+
+    def test_empty_results_are_unknown_but_confirmed_holiday_is_skipped(self):
+        run = JobRun('bars', self.store)
+        run.record(skipped=1, message='No quotes')
+        run.finish()
+        self.assertEqual(self.store.read('job-bars')['status'], 'unknown')
+        holiday = JobRun('daily', self.store)
+        holiday.record(skipped=1, confirmed_skip=True)
+        holiday.finish()
+        self.assertEqual(self.store.read('job-daily')['status'], 'skipped')
 
     def test_duplicate_job_does_not_overwrite_running_record(self):
         calls = []
@@ -209,6 +228,30 @@ class SystemTests(unittest.TestCase):
         self.assertFalse(report['fresh'])
         self.assertEqual(report['status'], 'unknown')
 
+    def test_successful_diagnostic_warms_real_calendar_cache_without_writing_quotes(self):
+        def respond(url, json, **kwargs):
+            api, params = json['api_name'], json['params']
+            if api == 'trade_cal':
+                days = pd.date_range(params['start_date'], params['end_date'])
+                fields = ['exchange','cal_date','is_open']
+                items = [['SSE',day.strftime('%Y%m%d'),int(day.weekday()<5)] for day in days]
+            elif api in {'daily','index_daily','fund_daily'}:
+                fields, items = ['ts_code','trade_date','close'], [[params['ts_code'],'20261119',1]]
+            else:
+                fields, items = ['ts_code','end_date'], [[params['ts_code'],'20260930']]
+            response = Mock(status_code=200)
+            response.json.return_value = {'code':0,'data':{'fields':fields,'items':items}}
+            return response
+        with patch('app.services.runtime_state.settings.tushare_token', 'test-token'), patch(
+                'app.services.system_diagnostics.utc_now', return_value=self.now), patch(
+                'app.services.system_diagnostics.EtfService', return_value=self.etf), patch(
+                'app.services.tushare_client.requests.post', side_effect=respond):
+            result = SystemDiagnostics(self.store).run()
+        self.assertEqual(result['status'], 'ok')
+        self.assertEqual(len(result['checks']), 7)
+        self.assertIsNotNone(self.etf.cached_trade_dates(date(2026, 9, 20),date(2026, 11, 19)))
+        self.assertFalse(list(self.etf._frame_cache.directory.glob('daily-*.json')))
+
     def test_state_json_contains_no_credentials(self):
         with patch('app.services.runtime_state.settings.tushare_token', 'private-token-for-test'):
             result = self.service.get_status(self.session)
@@ -220,6 +263,16 @@ class SystemTests(unittest.TestCase):
         pro.daily.side_effect = [pd.DataFrame({'ts_code': ['600001.SH']*5000}), TushareError('HTTP 502')]
         with self.assertRaises(TushareError):
             TushareStockService._fetch_all_pages(pro, 'daily')
+
+    def test_calendar_unavailable_is_service_unavailable_in_overview_routes(self):
+        from fastapi import HTTPException
+        from app.routers.overview import get_trade_dates, get_market_history
+        with patch.object(OverviewService, 'fetch_trade_dates', side_effect=RuntimeError('calendar unavailable')):
+            for call in (lambda:get_trade_dates(start='2026-11-18',end='2026-11-19'),
+                         lambda:get_market_history(start='2026-11-18',end='2026-11-19',session=self.session)):
+                with self.assertRaises(HTTPException) as caught:
+                    call()
+                self.assertEqual(caught.exception.status_code, 503)
 
     def test_empty_sector_fetch_keeps_existing_data(self):
         day = date(2026, 11, 19)
