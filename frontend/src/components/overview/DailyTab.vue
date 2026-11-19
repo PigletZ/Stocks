@@ -38,7 +38,7 @@
 
     <section class="panel">
       <div class="panel-header"><div><h2>短线结构</h2><small>仅在涨停明细与当日统计匹配时计算</small></div>
-        <router-link :to="{ path: '/review/ladder', query: { date: dashboard.date } }">查看连板梯队 →</router-link>
+        <router-link :to="{ name: 'overview', query: { tab: 'ladder', date: dashboard.date } }">查看连板天梯 →</router-link>
       </div>
       <div class="structure-grid">
         <div><span>首板 / 二板 / 三板及以上</span><strong>{{ number(shortTerm.first_board) }} / {{ number(shortTerm.second_board) }} / {{ number(shortTerm.higher_board) }}</strong></div>

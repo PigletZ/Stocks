@@ -828,8 +828,8 @@ export interface LimitLadderResponse {
   total: number
 }
 
-export async function fetchLimitLadder(date?: string): Promise<LimitLadderResponse> {
-  const { data } = await api.get('/review/limit-ladder', { params: { date } })
+export async function fetchLimitLadder(date?: string, signal?: AbortSignal): Promise<LimitLadderResponse> {
+  const { data } = await api.get('/review/limit-ladder', { params: { date }, signal })
   return data
 }
 
@@ -859,8 +859,8 @@ export interface LimitPerfResponse {
   items: LimitPerfItem[]
 }
 
-export async function fetchLimitPerformance(date?: string): Promise<LimitPerfResponse> {
-  const { data } = await api.get('/review/limit-performance', { params: { date } })
+export async function fetchLimitPerformance(date?: string, signal?: AbortSignal): Promise<LimitPerfResponse> {
+  const { data } = await api.get('/review/limit-performance', { params: { date }, signal })
   return data
 }
 

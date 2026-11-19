@@ -1,19 +1,18 @@
 <template>
-  <div class="page">
-    <div class="page-header">
-      <h1>连板梯队</h1>
+  <div class="ladder-tab">
+    <div class="tab-header">
+      <div><h2>连板天梯</h2><p class="description">按连板高度查看所选日期的涨停结构，日期与概览顶部一致。</p></div>
       <div class="actions">
-        <input type="date" v-model="selectedDate" @change="loadAll" />
-        <button class="btn-secondary" @click="onSync" :disabled="syncing">
-          {{ syncing ? '同步中...' : '同步当日数据' }}
+        <button class="btn-secondary" @click="onSync" :disabled="syncing || loading">
+          {{ syncing ? '同步中...' : '同步所选日数据' }}
         </button>
       </div>
     </div>
 
-    <div v-if="error" class="error-message">{{ error }}</div>
+    <div v-if="error" class="error-message" role="alert">{{ error }} <button class="btn-secondary" @click="loadAll">重试</button></div>
     <div v-if="loading" class="loading-text">加载中...</div>
 
-    <template v-else>
+    <template v-else-if="loaded">
       <p v-if="perf.ready === false" class="loading-text">当日或对比日明细尚未齐备，延续率不计算；缺失报价标为未知。</p>
       <!-- 昨日涨停表现统计 -->
       <div v-if="perf.stats.total" class="stats-row">
@@ -22,7 +21,7 @@
           <div class="stat-value">{{ perf.stats.total }} 家</div>
         </div>
         <div class="stat-card">
-          <div class="stat-label">晋级率</div>
+          <div class="stat-label">继续涨停率</div>
           <div class="stat-value" :class="(perf.stats.promote_rate ?? 0) >= 30 ? 'up' : ''">
             {{ perf.stats.promote_rate == null ? '—' : perf.stats.promote_rate + '%' }}
           </div>
@@ -34,7 +33,7 @@
           </div>
         </div>
         <div class="stat-card">
-          <div class="stat-label">晋级 / 炸板 / 跌停</div>
+          <div class="stat-label">继续涨停 / 炸板 / 跌停</div>
           <div class="stat-value">
             <span class="up">{{ perf.stats.promoted ?? '—' }}</span> /
             <span class="warn">{{ perf.stats.opened ?? '—' }}</span> /
@@ -46,7 +45,7 @@
       <!-- 梯队图 -->
       <div class="panel">
         <div class="panel-title">
-          {{ ladder.trade_date }} 涨停梯队（共 {{ ladder.total }} 家）
+          {{ ladder.trade_date }} 连板天梯（共 {{ ladder.total }} 家）
         </div>
         <div v-if="!ladder.ladder.length" class="empty">暂无数据</div>
         <div v-else class="ladder">
@@ -54,33 +53,33 @@
             <div class="ladder-head" :class="{ high: group.boards >= 3 }">
               {{ group.boards }} 板 <span class="count">x{{ group.count }}</span>
             </div>
-            <div
+            <button
               v-for="s in group.stocks"
               :key="s.code"
               class="stock-chip"
               @click="openDetail(s.code, s.name)"
             >
-              <div class="chip-name">{{ s.name }}</div>
-              <div class="chip-meta">
+              <span class="chip-name">{{ s.name }}</span>
+              <span class="chip-meta">
                 <span v-if="s.first_time" class="time">{{ formatTime(s.first_time) }}</span>
                 <span v-if="s.open_times" class="open-times">开{{ s.open_times }}</span>
-              </div>
-            </div>
+              </span>
+            </button>
           </div>
         </div>
       </div>
 
       <!-- 昨日涨停今日表现明细 -->
       <div v-if="perf.items.length" class="panel">
-        <div class="panel-title">昨日涨停今日表现（{{ perf.trade_date }}）</div>
-        <table class="result-table">
+        <div class="panel-title">{{ perf.prev_date }} 涨停股在 {{ perf.trade_date }} 的表现</div>
+        <div class="table-wrap"><table class="result-table">
           <thead>
             <tr>
               <th>代码</th>
               <th>名称</th>
-              <th>昨日连板</th>
-              <th>今日涨幅</th>
-              <th>今日状态</th>
+              <th>对比日连板</th>
+              <th>所选日涨幅</th>
+              <th>所选日状态</th>
             </tr>
           </thead>
           <tbody>
@@ -98,7 +97,7 @@
               </td>
             </tr>
           </tbody>
-        </table>
+        </table></div>
       </div>
     </template>
 
@@ -106,36 +105,38 @@
       :visible="detail.visible"
       :code="detail.code"
       :name="detail.name"
-      :as-of="selectedDate || ladder.trade_date || undefined"
+      :as-of="tradeDate"
       @close="detail.visible = false"
     />
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { onUnmounted, reactive, ref, watch } from 'vue'
 import {
   fetchLimitLadder,
   fetchLimitPerformance,
   syncReviewData,
   type LimitLadderResponse,
   type LimitPerfResponse,
-} from '../api/client'
-import PigletStockDetailPopup from '../components/strategy/PigletStockDetailPopup.vue'
+} from '../../api/client'
+import PigletStockDetailPopup from '../strategy/PigletStockDetailPopup.vue'
 
-const route = useRoute()
-const selectedDate = ref(typeof route.query.date === 'string' ? route.query.date : '')
+const props = defineProps<{ tradeDate: string }>()
+const emit = defineEmits<{ synced: [date: string] }>()
 const loading = ref(false)
+const loaded = ref(false)
 const syncing = ref(false)
 const error = ref('')
 const ladder = ref<LimitLadderResponse>({ trade_date: null, ladder: [], total: 0 })
 const perf = ref<LimitPerfResponse>({ trade_date: null, prev_date: null, stats: { total: 0, promoted: 0, promote_rate: 0, opened: 0, limit_down: 0, avg_pct: null }, items: [] })
 const detail = reactive({ visible: false, code: '', name: '' })
+let controller: AbortController | null = null
+let disposed = false
 
 function changeClass(n: number | null | undefined) {
   if (n === null || n === undefined) return ''
-  return n >= 0 ? 'up' : 'down'
+  return n > 0 ? 'up' : n < 0 ? 'down' : ''
 }
 
 function statusClass(s: string) {
@@ -154,53 +155,64 @@ function openDetail(code: string, name: string) {
 }
 
 async function loadAll() {
+  controller?.abort()
+  detail.visible = false
+  loaded.value = false
+  if (!props.tradeDate || disposed) return
+  const date = props.tradeDate
+  const request = new AbortController()
+  controller = request
   loading.value = true
   error.value = ''
   try {
-    const d = selectedDate.value || undefined
-    const [l, p] = await Promise.all([fetchLimitLadder(d), fetchLimitPerformance(d)])
+    const [l, p] = await Promise.all([fetchLimitLadder(date, request.signal), fetchLimitPerformance(date, request.signal)])
+    if (request.signal.aborted || disposed || props.tradeDate !== date) return
+    if (l.trade_date !== date || p.trade_date !== date) throw new Error('返回数据日期与所选日期不一致，请重试。')
     ladder.value = l
     perf.value = p
+    loaded.value = true
   } catch (err: any) {
-    error.value = err?.response?.data?.detail || '加载失败'
+    if (!request.signal.aborted && !disposed) error.value = err?.response?.data?.detail || err?.message || '加载失败'
   } finally {
-    loading.value = false
+    if (controller === request) loading.value = false
   }
 }
 
 async function onSync() {
+  const date = props.tradeDate
+  if (!date || syncing.value) return
   syncing.value = true
   error.value = ''
   try {
-    await syncReviewData(selectedDate.value || undefined)
-    await loadAll()
+    await syncReviewData(date)
+    if (!disposed && props.tradeDate === date) emit('synced', date)
   } catch (err: any) {
-    error.value = err?.response?.data?.detail || '同步失败'
+    if (!disposed && props.tradeDate === date) error.value = err?.response?.data?.detail || '同步失败'
   } finally {
     syncing.value = false
   }
 }
 
-onMounted(loadAll)
+watch(() => props.tradeDate, loadAll, { immediate: true })
+onUnmounted(() => { disposed = true; controller?.abort() })
 </script>
 
 <style scoped>
-.page {
-  padding: 20px;
-  max-width: 1400px;
-}
-
-.page-header {
+.tab-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 16px;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
-.page-header h1 {
+.tab-header h2 {
   font-size: 20px;
   color: #e5e7eb;
 }
+.description { color: #9ca3af; font-size: 12px; line-height: 1.8; }
+.table-wrap { overflow-x: auto; }
 
 .actions {
   display: flex;
@@ -293,6 +305,8 @@ onMounted(loadAll)
   padding: 8px 10px;
   cursor: pointer;
   transition: border-color 0.2s;
+  text-align: left;
+  width: 100%;
 }
 
 .stock-chip:hover {
@@ -300,6 +314,7 @@ onMounted(loadAll)
 }
 
 .chip-name {
+  display: block;
   font-size: 13px;
   color: #e5e7eb;
   margin-bottom: 4px;

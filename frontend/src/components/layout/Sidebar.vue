@@ -34,9 +34,6 @@
         </div>
         <div v-show="reviewExpanded" class="nav-sub">
           <router-link to="/review" class="nav-item" :class="{ active: $route.name === 'review-workbench' }">复盘工作台</router-link>
-          <router-link to="/review/ladder" class="nav-item" :class="{ active: $route.name === 'limit-ladder' }">
-            连板梯队
-          </router-link>
 
           <router-link to="/review/journal" class="nav-item" :class="{ active: $route.name === 'journal' }">
             复盘日志

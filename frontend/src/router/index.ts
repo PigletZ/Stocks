@@ -5,7 +5,6 @@ import WatchlistView from '../views/WatchlistView.vue'
 import StockDetailView from '../views/StockDetailView.vue'
 import EtfListView from '../views/EtfListView.vue'
 import FinancialAnalysisView from '../views/FinancialAnalysisView.vue'
-import LimitLadderView from '../views/LimitLadderView.vue'
 import ReviewWorkbenchView from '../views/ReviewWorkbenchView.vue'
 import JournalView from '../views/JournalView.vue'
 import SystemView from '../views/SystemView.vue'
@@ -60,8 +59,8 @@ const router = createRouter({
     {
       path: '/review/ladder',
       name: 'limit-ladder',
-      component: LimitLadderView,
-      meta: { title: '连板梯队', parent: 'review' },
+      redirect: to => ({ name: 'overview', query: { ...to.query, tab: 'ladder' } }),
+      meta: { title: '连板天梯', parent: 'overview' },
     },
     {
       path: '/review/emotion',

@@ -18,12 +18,13 @@
     </div>
     <div v-if="error" class="error" role="alert">{{ error }} <button @click="loadDashboard(selectedDate)">重试</button></div>
     <nav class="tab-nav" aria-label="概览分类">
-      <button v-for="tab in tabs" :key="tab.key" :class="{ active: activeTab === tab.key }" @click="activeTab = tab.key">{{ tab.label }}</button>
+      <button v-for="tab in tabs" :key="tab.key" :class="{ active: activeTab === tab.key }" :aria-pressed="activeTab === tab.key" @click="changeTab(tab.key)">{{ tab.label }}</button>
     </nav>
     <div v-if="loading" class="loading-panel">正在整理市场数据…</div>
     <div v-else-if="dashboard" :key="selectedDate">
       <DailyTab v-if="activeTab === 'daily'" :dashboard="dashboard" @refresh="loadDashboard(selectedDate)" />
       <LimitTab v-if="activeTab === 'limit-up'" title="涨停股票" type="up" :trade-date="selectedDate" @add-watchlist="addToWl" />
+      <LimitLadderTab v-if="activeTab === 'ladder'" :trade-date="selectedDate" @synced="loadDashboard($event)" />
       <LimitTab v-if="activeTab === 'limit-down'" title="跌停股票" type="down" :trade-date="selectedDate" @add-watchlist="addToWl" />
       <DragonTigerTab v-if="activeTab === 'dragon-tiger'" :trade-date="selectedDate" @add-watchlist="addToWl" />
       <TopGainersTab v-if="activeTab === 'top-gainers'" :trade-date="selectedDate" @add-watchlist="addToWl" />
@@ -32,8 +33,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { ref, computed, defineAsyncComponent, onUnmounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import DailyTab from '../components/overview/DailyTab.vue'
 import LimitTab from '../components/overview/LimitTab.vue'
 import DragonTigerTab from '../components/overview/DragonTigerTab.vue'
@@ -42,18 +43,21 @@ import { fetchOverviewDashboard, addToWatchlist } from '../api/client'
 import type { OverviewDashboard } from '../api/client'
 
 const route = useRoute()
+const router = useRouter()
+const LimitLadderTab = defineAsyncComponent(() => import('../components/overview/LimitLadderTab.vue'))
 const selectedDate = ref('')
 const dashboard = ref<OverviewDashboard | null>(null)
-const activeTab = ref('daily')
 const loading = ref(false)
 const error = ref('')
 let controller: AbortController | null = null
 const today = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(new Date())
 const tabs = [
   { key: 'daily', label: '日概览' }, { key: 'limit-up', label: '涨停' },
+  { key: 'ladder', label: '连板天梯' },
   { key: 'limit-down', label: '跌停' }, { key: 'dragon-tiger', label: '龙虎榜' },
   { key: 'top-gainers', label: '涨幅榜' },
 ]
+const activeTab = computed(() => tabs.find(tab => tab.key === route.query.tab)?.key || 'daily')
 const previousDate = computed(() => [...(dashboard.value?.available_dates || [])].reverse().find(d => d < selectedDate.value) || '')
 const nextDate = computed(() => dashboard.value?.available_dates.find(d => d > selectedDate.value) || '')
 const statusText = computed(() => ({ ready: '统计已就绪', partial: '部分数据待补齐', missing: '所选日期暂无统计' })[dashboard.value?.status || 'missing'])
@@ -66,27 +70,33 @@ async function loadDashboard(date?: string) {
   controller = request
   loading.value = true
   error.value = ''
+  dashboard.value = null
+  selectedDate.value = date || ''
   try {
     const data = await fetchOverviewDashboard(date || undefined, request.signal)
-    if (request.signal.aborted) return
+    if (request.signal.aborted || route.name !== 'overview') return
     dashboard.value = data
     selectedDate.value = data.date
+    if (route.query.date !== data.date) {
+      router.replace({ name: 'overview', query: { ...route.query, date: data.date } })
+    }
   } catch (err: any) {
     if (!request.signal.aborted) error.value = err?.response?.data?.detail || '加载失败，请重试。'
   } finally {
     if (controller === request) loading.value = false
   }
 }
+function changeTab(tab: string) { router.replace({ name: 'overview', query: { ...route.query, tab } }) }
 function changeDate(date: string) { if (date) loadDashboard(date) }
 function onDateInput(event: Event) { changeDate((event.target as HTMLInputElement).value) }
 async function addToWl(code: string) {
   try { await addToWatchlist(code); alert(`已添加 ${code} 到自选`) }
   catch (err: any) { alert(err?.response?.data?.detail || '添加失败') }
 }
-onMounted(() => {
-  const initialDate = typeof route.query.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(route.query.date) ? route.query.date : undefined
-  loadDashboard(initialDate)
-})
+watch(() => route.query.date, value => {
+  const date = typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined
+  if (!dashboard.value || date !== selectedDate.value) loadDashboard(date)
+}, { immediate: true })
 onUnmounted(() => controller?.abort())
 </script>
 
