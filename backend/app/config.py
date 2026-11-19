@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./stocks.db"
     tushare_token: str = ""
     public_host: str = ""  # 公网 IP 或域名，用于 CORS 白名单
+    system_state_dir: str = ""  # 留空时使用 backend/.cache/system
+    backup_dir: str = ""  # 留空时使用 backend/backups
 
     # 必须由环境变量或 backend/.env 提供，禁止回退到内置凭据。
     auth_username: str = Field(min_length=1)

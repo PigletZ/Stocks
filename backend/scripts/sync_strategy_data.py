@@ -15,40 +15,36 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from app.config import settings
 from app.database import engine
 from app.models import Bar, Stock, StockDailyQuote
 from app.services.tushare_stock_service import TushareStockService
+from app.services.etf_service import EtfService
+from app.services.job_monitor import tracked_job, record_progress
+from app.services.tushare_client import TushareError
 
 
+@tracked_job("quotes")
 def sync_daily_quotes(days: int = 30) -> None:
     """同步最近 N 个交易日的全市场日行情。"""
     service = TushareStockService()
-    pro = service._get_tushare_pro()
 
     end_date = date.today()
     start_date = end_date - timedelta(days=days * 2)
 
-    df_cal = pro.trade_cal(
-        exchange="SSE",
-        start_date=start_date.strftime("%Y%m%d"),
-        end_date=end_date.strftime("%Y%m%d"),
-        is_open="1",
-    )
-    if df_cal is None or df_cal.empty:
-        print("未获取到交易日历")
+    trade_dates = EtfService()._fetch_trade_dates(start_date, end_date)[-days:]
+    if not trade_dates:
+        record_progress(skipped=1, message="官方日历确认区间内无交易日", unit="交易日", confirmed_skip=True)
         return
-
-    trade_dates = sorted(df_cal["cal_date"].astype(str).tolist())
-    trade_dates = trade_dates[-days:]
 
     print(f"开始同步 {len(trade_dates)} 个交易日的 StockDailyQuote...")
 
     with Session(engine) as session:
-        for date_str in trade_dates:
-            trade_date = datetime.strptime(date_str, "%Y%m%d").date()
+        for trade_date in trade_dates:
             try:
                 quotes = service.fetch_daily_quotes(trade_date)
+                if not quotes:
+                    record_progress(failed=1, message=f"{trade_date} 未返回行情，保留已有数据", unit="交易日")
+                    continue
 
                 for quote in quotes:
                     existing = session.exec(
@@ -69,15 +65,20 @@ def sync_daily_quotes(days: int = 30) -> None:
                         session.add(quote)
 
                 session.commit()
+                record_progress(succeeded=1, written_rows=len(quotes), message=f"{trade_date} 行情完成", unit="交易日")
                 print(f"  {trade_date}: {len(quotes)} 只股票")
             except Exception as e:
                 session.rollback()
+                if isinstance(e, TushareError):
+                    raise
+                record_progress(failed=1, message=str(e), unit="交易日")
                 print(f"  {trade_date} 同步失败: {e}")
                 continue
 
     print("StockDailyQuote 同步完成")
 
 
+@tracked_job("bars")
 def sync_bars(days: int = 365, sleep_seconds: float = 0.3) -> None:
     """同步所有主板股票最近 N 天的 Bar 数据。"""
     service = TushareStockService()
@@ -96,6 +97,8 @@ def sync_bars(days: int = 365, sleep_seconds: float = 0.3) -> None:
         and not s.code.startswith("300")
         and not s.code.startswith("301")
     ]
+    if not main_board_codes:
+        raise RuntimeError("主板股票池为空，无法同步")
 
     print(f"开始同步 {len(main_board_codes)} 只主板股票的 Bar 数据（{start_date} ~ {end_date}）...")
 
@@ -104,6 +107,7 @@ def sync_bars(days: int = 365, sleep_seconds: float = 0.3) -> None:
             try:
                 bars = service.fetch_daily_bars(code, start=start_date, end=end_date)
                 if not bars:
+                    record_progress(skipped=1, message=f"{code} 未返回区间 K 线，覆盖情况待核验", unit="股票")
                     continue
 
                 min_ts = min(b.timestamp for b in bars)
@@ -120,6 +124,7 @@ def sync_bars(days: int = 365, sleep_seconds: float = 0.3) -> None:
                 )
                 session.add_all(bars)
                 session.commit()
+                record_progress(succeeded=1, written_rows=len(bars), message=f"{code} K 线完成", unit="股票")
 
                 if i % 50 == 0:
                     print(f"  已同步 {i}/{len(main_board_codes)} 只股票")
@@ -127,6 +132,9 @@ def sync_bars(days: int = 365, sleep_seconds: float = 0.3) -> None:
                 time.sleep(sleep_seconds)
             except Exception as e:
                 session.rollback()
+                if isinstance(e, TushareError):
+                    raise
+                record_progress(failed=1, message=str(e), unit="股票")
                 print(f"  同步 {code} 失败: {e}")
                 continue
 
@@ -143,10 +151,16 @@ def main():
     parser.add_argument("--skip-bars", action="store_true", help="跳过 K 线同步")
     args = parser.parse_args()
 
-    sync_daily_quotes(args.quote_days)
+    quote_error = None
+    try:
+        sync_daily_quotes(args.quote_days)
+    except Exception as error:
+        quote_error = error
 
     if not args.skip_bars:
         sync_bars(args.bar_days, args.bar_sleep)
+    if quote_error is not None:
+        raise quote_error
 
 
 if __name__ == "__main__":

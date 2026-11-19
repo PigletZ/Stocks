@@ -13,7 +13,7 @@ from datetime import date, datetime
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
-import tushare as ts
+from .tushare_client import TushareClient
 from sqlmodel import Session, select
 
 from ..config import settings
@@ -61,7 +61,7 @@ class FinancialService:
             token = settings.tushare_token
             if not token:
                 raise RuntimeError("Tushare token 未配置，请检查 /etc/kimi/stocks/base.conf 中的 [tushare]")
-            self._tushare_pro = ts.pro_api(token)
+            self._tushare_pro = TushareClient(token)
         return self._tushare_pro
 
     @staticmethod
@@ -183,7 +183,7 @@ class FinancialService:
         session.commit()
         return len(values)
 
-    def refresh_stock(self, code: str, session: Session) -> Dict[str, int]:
+    def refresh_stock(self, code: str, session: Session, strict: bool = False) -> Dict[str, int]:
         """三表全量回源并入库，返回各表写入条数"""
         ts_code = self._code_to_ts_code(code)
         if not ts_code:
@@ -193,15 +193,20 @@ class FinancialService:
             try:
                 df = self._fetch_statement(ts_code, stmt_type)
                 rows = self._dedupe(df)
+                if strict and not rows:
+                    raise RuntimeError(f"{code} {stmt_type} 未返回可验证的财报")
                 counts[stmt_type] = self._upsert_rows(stmt_type, code, rows, session)
             except Exception:
+                session.rollback()
+                if strict:
+                    raise
                 logger.exception("财务报表拉取失败: %s %s", code, stmt_type)
                 counts[stmt_type] = 0
         return counts
 
     # ---------- 轻量校验 ----------
 
-    def ensure_fresh(self, codes: List[str], session: Session) -> Dict[str, Dict[str, int]]:
+    def ensure_fresh(self, codes: List[str], session: Session, strict: bool = False) -> Dict[str, Dict[str, int]]:
         """每股 1 次 income 轻量查询；有新公告则三表全量回源。返回实际刷新的股票及条数。"""
         refreshed = {}
         pro = self._get_tushare_pro()
@@ -213,10 +218,14 @@ class FinancialService:
                 df = pro.income(ts_code=ts_code)
                 time.sleep(0.15)
             except Exception:
+                if strict:
+                    raise
                 logger.exception("轻量校验失败，使用本地缓存: %s", code)
                 continue
             remote = self._dedupe(df if df is not None else pd.DataFrame())
             if not remote:
+                if strict:
+                    raise RuntimeError(f"{code} 未返回可验证的利润表")
                 continue
             latest = remote[-1]
             db_latest = session.exec(
@@ -236,7 +245,7 @@ class FinancialService:
                 )
             )
             if need_refresh:
-                refreshed[code] = self.refresh_stock(code, session)
+                refreshed[code] = self.refresh_stock(code, session, strict=strict)
         return refreshed
 
     # ---------- 派生指标 ----------

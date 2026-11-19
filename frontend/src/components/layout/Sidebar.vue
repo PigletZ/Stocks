@@ -58,7 +58,7 @@
       </div>
       <router-link to="/system" class="nav-item" :class="{ active: $route.name === 'system' }">
         <span class="icon">⚙️</span>
-        <span>系统监控</span>
+        <span>系统管理</span>
       </router-link>
     </nav>
 

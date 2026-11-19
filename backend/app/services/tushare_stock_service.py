@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import List, Optional
 import pandas as pd
-import tushare as ts
+from .tushare_client import TushareClient
 
 from ..config import settings
 from ..models import Stock, Bar, StockDailyQuote
@@ -17,7 +17,7 @@ class TushareStockService:
             token = settings.tushare_token
             if not token:
                 raise RuntimeError("Tushare token 未配置，请检查 /etc/kimi/stocks/base.conf 或 TUSHARE_TOKEN 环境变量")
-            self._tushare_pro = ts.pro_api(token)
+            self._tushare_pro = TushareClient(token)
         return self._tushare_pro
 
     @staticmethod
@@ -59,10 +59,8 @@ class TushareStockService:
         offset = 0
         limit = 5000
         while True:
-            try:
-                df = getattr(pro, api_name)(offset=offset, limit=limit, **kwargs)
-            except Exception:
-                break
+            # 任意一页失败都不能把前几页当作全量结果落库。
+            df = getattr(pro, api_name)(offset=offset, limit=limit, **kwargs)
             if df is None or df.empty:
                 break
             frames.append(df)

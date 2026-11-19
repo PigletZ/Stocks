@@ -16,6 +16,13 @@ with patch.dict(os.environ, {"AUTH_USERNAME": "test-user", "AUTH_PASSWORD": "tes
 
 
 class TushareTransportTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        patcher = patch('app.services.runtime_state.settings.system_state_dir', directory.name)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_http_502_is_not_empty_data_and_repeated_calls_back_off(self):
         client = TushareClient("test-private-token")
         response = Mock(status_code=502, text="body test-private-token")
@@ -77,6 +84,9 @@ class EtfCacheTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
+        patcher = patch('app.services.runtime_state.settings.system_state_dir', str(Path(self.directory.name) / 'system'))
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.service = EtfService(cache_dir=self.directory.name)
         self.pro = Mock()
         self.service._tushare_pro = self.pro

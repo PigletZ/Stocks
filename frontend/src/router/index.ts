@@ -92,7 +92,7 @@ const router = createRouter({
       path: '/system',
       name: 'system',
       component: SystemView,
-      meta: { title: '系统监控' },
+      meta: { title: '系统管理' },
     },
   ],
 })

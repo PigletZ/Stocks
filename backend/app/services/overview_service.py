@@ -5,7 +5,7 @@ import logging
 from sqlalchemy import func
 from sqlmodel import Session, select
 import pandas as pd
-import tushare as ts
+from .tushare_client import TushareClient
 
 from ..config import settings
 
@@ -31,7 +31,7 @@ class OverviewService:
             token = settings.tushare_token
             if not token:
                 raise RuntimeError("Tushare token 未配置，请检查 /etc/kimi/stocks/base.conf 或 TUSHARE_TOKEN 环境变量")
-            self._tushare_pro = ts.pro_api(token)
+            self._tushare_pro = TushareClient(token)
         return self._tushare_pro
 
     @staticmethod
@@ -170,24 +170,8 @@ class OverviewService:
 
     def fetch_trade_dates(self, start: date, end: date) -> List[date]:
         """获取指定日期范围内的 A 股交易日（使用 Tushare 交易日历），结果按升序返回"""
-        try:
-            df = self._get_tushare_pro().trade_cal(
-                exchange="SSE",
-                start_date=start.strftime("%Y%m%d"),
-                end_date=end.strftime("%Y%m%d"),
-            )
-            df = df[df["is_open"] == 1]
-            dates = sorted(df["cal_date"].astype(str).tolist())
-            return [datetime.strptime(d, "%Y%m%d").date() for d in dates]
-        except Exception:
-            # fallback：仅剔除周末
-            dates = []
-            current = start
-            while current <= end:
-                if current.weekday() < 5:
-                    dates.append(current)
-                current += timedelta(days=1)
-            return dates
+        from .etf_service import EtfService
+        return EtfService()._fetch_trade_dates(start, end)
 
     def fetch_market_history(
         self,
@@ -1110,6 +1094,12 @@ class OverviewService:
         if session is None:
             return 0
 
+        data = self._fetch_sector_daily_from_tushare(target_date)
+        rows = data.get(sector_type, [])
+        if not rows:
+            # 上游失败或未发布时，不能先删掉已有数据。
+            return 0
+
         # 删除旧缓存与重新写入放在同一事务，避免与并发请求交错产生竞态
         old_rows = session.exec(
             select(SectorDaily).where(
@@ -1120,11 +1110,6 @@ class OverviewService:
         for row in old_rows:
             session.delete(row)
 
-        data = self._fetch_sector_daily_from_tushare(target_date)
-        rows = data.get(sector_type, [])
-        if not rows:
-            session.commit()
-            return 0
         # _upsert_sector_daily 内部会 commit；删除在同一会话中随之一起提交
         return self._upsert_sector_daily(session, sector_type, target_date, rows)
 

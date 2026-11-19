@@ -5,7 +5,7 @@ from datetime import date, datetime
 from typing import Dict, List, Optional
 
 import pandas as pd
-import tushare as ts
+from .tushare_client import TushareClient
 from sqlmodel import Session, select, delete
 
 from ..config import settings
@@ -27,7 +27,7 @@ class ReviewService:
             token = settings.tushare_token
             if not token:
                 raise RuntimeError("Tushare token 未配置")
-            self._tushare_pro = ts.pro_api(token)
+            self._tushare_pro = TushareClient(token)
         return self._tushare_pro
 
     # ==================== 数据落库 ====================

@@ -20,19 +20,30 @@ from sqlmodel import Session
 
 from app.database import engine
 from app.services.financial_service import FinancialService
+from app.services.job_monitor import tracked_job, record_progress
+from app.services.tushare_client import TushareError
 
 
+@tracked_job("financial")
 def main():
     service = FinancialService()
     with Session(engine) as session:
         pool = service.get_highlight_pool(session)
+        if not pool:
+            raise RuntimeError("财务股票池为空，无法验证财报")
         print(f"股票池 {len(pool)} 只，开始轻量校验...", flush=True)
         refreshed = 0
         for i, code in enumerate(pool, 1):
             try:
-                result = service.ensure_fresh([code], session)
+                result = service.ensure_fresh([code], session, strict=True)
                 refreshed += len(result)
+                record_progress(succeeded=1, written_rows=sum(sum(counts.values()) for counts in result.values()), unit="股票")
             except Exception as e:
+                session.rollback()
+                if isinstance(e, TushareError):
+                    record_progress(skipped=len(pool)-i, message="数据源异常，剩余股票未执行", unit="股票")
+                    raise
+                record_progress(failed=1, message=str(e), unit="股票")
                 print(f"[{i}/{len(pool)}] {code} 校验失败: {e}", flush=True)
             if i % 200 == 0:
                 print(f"[{i}/{len(pool)}] 进度 {i * 100 // len(pool)}%，已刷新 {refreshed}", flush=True)

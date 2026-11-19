@@ -6,6 +6,7 @@ import pandas as pd
 from ..config import settings
 from .etf_cache import EtfFrameCache
 from .tushare_client import TushareClient, TushareError
+from .runtime_state import get_preferences
 
 
 # ETF 品类规则：按优先级从高到低匹配，命中即返回
@@ -213,32 +214,50 @@ class EtfService:
         for year in range(start.year, end.year + 1):
             first, last = max(start, date(year, 1, 1)), min(end, date(year, 12, 31))
 
-            def normalize(frame):
-                if frame is None or frame.empty or not {"cal_date", "is_open"}.issubset(frame.columns):
-                    raise ValueError("empty calendar")
-                frame = frame.copy()
-                if "exchange" in frame:
-                    frame = frame[frame["exchange"] == "SSE"]
-                parsed = pd.to_datetime(frame["cal_date"].astype(str), format="%Y%m%d", errors="raise")
-                frame["cal_date"] = parsed.dt.strftime("%Y%m%d")
-                frame = frame[parsed.dt.year == year].copy()
-                frame["is_open"] = pd.to_numeric(frame["is_open"], errors="coerce")
-                expected = set(pd.date_range(first, last).strftime("%Y%m%d"))
-                if (not frame["is_open"].isin([0, 1]).all() or frame["cal_date"].duplicated().any()
-                        or not expected.issubset(set(frame["cal_date"]))):
-                    raise ValueError("incomplete calendar")
-                return frame[["cal_date", "is_open"]]
-
             frame = self._cached_frame(
-                f"calendar-{year}", f"{year} 年交易日历", 86400,
+                f"calendar-{year}", f"{year} 年交易日历", get_preferences().calendar_cache_seconds,
                 lambda: self._get_tushare_pro().trade_cal(
                     exchange="SSE", start_date=f"{year}0101", end_date=f"{year}1231",
                     fields="exchange,cal_date,is_open"),
-                normalize,
+                lambda frame: self._normalize_calendar(frame, first, last),
             )
             dates.extend(datetime.strptime(day, "%Y%m%d").date()
                          for day in frame.loc[frame["is_open"] == 1, "cal_date"])
         return sorted(day for day in dates if start <= day <= end)
+
+    @staticmethod
+    def _normalize_calendar(frame, first, last):
+        if frame is None or frame.empty or not {"cal_date", "is_open"}.issubset(frame.columns):
+            raise ValueError("empty calendar")
+        frame = frame.copy()
+        if "exchange" in frame:
+            frame = frame[frame["exchange"] == "SSE"]
+        parsed = pd.to_datetime(frame["cal_date"].astype(str), format="%Y%m%d", errors="raise")
+        frame["cal_date"] = parsed.dt.strftime("%Y%m%d")
+        frame = frame[parsed.dt.year == first.year].copy()
+        frame["is_open"] = pd.to_numeric(frame["is_open"], errors="coerce")
+        expected = set(pd.date_range(first, last).strftime("%Y%m%d"))
+        if (not frame["is_open"].isin([0, 1]).all() or frame["cal_date"].duplicated().any()
+                or not expected.issubset(set(frame["cal_date"]))):
+            raise ValueError("incomplete calendar")
+        return frame[["cal_date", "is_open"]]
+
+    def cached_trade_dates(self, start, end):
+        """只读取缓存，不发起网络请求；供系统状态页使用。"""
+        dates, fetched = [], []
+        for year in range(start.year, end.year + 1):
+            cached = self._frame_cache.get(f"calendar-{year}")
+            if cached is None:
+                return None
+            first, last = max(start, date(year, 1, 1)), min(end, date(year, 12, 31))
+            try:
+                frame = self._normalize_calendar(cached[1], first, last)
+            except (ValueError, KeyError, TypeError):
+                return None
+            dates.extend(datetime.strptime(day, "%Y%m%d").date()
+                         for day in frame.loc[frame["is_open"] == 1, "cal_date"])
+            fetched.append(cached[0])
+        return sorted(day for day in dates if start <= day <= end), min(fetched)
 
     def _get_previous_trade_date(self, target_date: date) -> Optional[date]:
         """获取 target_date 之前最近的一个交易日"""
@@ -264,7 +283,7 @@ class EtfService:
                 raise ValueError("missing listed ETFs")
             df["code"] = df["ts_code"].astype(str).apply(self._ts_code_to_code)
             return df
-        return self._cached_frame("basic", "ETF 基础资料", 3600,
+        return self._cached_frame("basic", "ETF 基础资料", get_preferences().etf_basic_cache_seconds,
                                   lambda: self._get_tushare_pro().fund_basic(market="E"), normalize)
 
     def _fetch_etf_daily_for_date(self, target_date: date) -> pd.DataFrame:
@@ -279,7 +298,7 @@ class EtfService:
             df = df.copy()
             df["code"] = df["ts_code"].astype(str).apply(self._ts_code_to_code)
             return df
-        return self._cached_frame(f"daily-{date_str}", f"ETF 日线 {target_date.isoformat()}", 300,
+        return self._cached_frame(f"daily-{date_str}", f"ETF 日线 {target_date.isoformat()}", get_preferences().etf_daily_cache_seconds,
                                   lambda: self._get_tushare_pro().fund_daily(trade_date=date_str),
                                   normalize, allow_empty=True)
 

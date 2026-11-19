@@ -1,287 +1,98 @@
 <template>
-  <div class="page">
-    <div class="page-header">
-      <h1>系统监控</h1>
-      <div class="actions">
-        <span class="generated">更新于 {{ formatTime(status?.generated_at) }}</span>
-        <button class="btn-secondary" @click="load" :disabled="loading">{{ loading ? '刷新中...' : '刷新' }}</button>
+  <div class="system-workspace" :aria-busy="loading">
+    <header class="page-header">
+      <div><span class="eyebrow">数据保障 / 运行维护</span><h1>系统管理</h1><p>查看数据是否可用、任务是否完成，以及需要处理的异常。</p></div>
+      <div class="header-actions"><button class="button" :disabled="loading" @click="load">{{ loading ? '刷新中…' : '刷新本地状态' }}</button><button class="button primary" :disabled="checking" @click="diagnose">{{ checking ? '正在检查接口…' : '检查数据源' }}</button></div>
+    </header>
+    <p v-if="error" class="feedback error" role="alert">{{ error }}<span v-if="status"> 以下保留上次成功加载的状态：{{ formatTime(status.generated_at) }}。</span></p>
+    <p v-if="operationError" class="feedback error" role="alert">{{ operationError }}</p>
+    <p v-if="notice" class="feedback good" role="status">{{ notice }}</p>
+    <p v-if="loading && !status" class="empty">正在读取本地数据与运行记录…</p>
+    <template v-if="status">
+      <div class="overview-strip" :class="tone(status.summary.status)"><div class="overview-title"><i></i><strong>{{ status.summary.status === 'ok' ? '运行与数据检查通过' : `有 ${status.summary.alert_count} 项需要关注` }}</strong></div><span>状态生成于 {{ formatTime(status.generated_at) }} · 北京时间</span></div>
+      <div class="metrics">
+        <article><span>数据源</span><strong :class="tone(status.diagnostics.status)">{{ statusText(status.diagnostics.status) }}</strong><small>{{ status.diagnostics.checked_at ? `最近检查 ${formatTime(status.diagnostics.checked_at)}` : '点击“检查数据源”核验接口' }}{{ status.diagnostics.checked_at && !status.diagnostics.fresh ? ' · 结果已过期' : '' }}</small></article>
+        <article><span>本地指数最新日期</span><strong>{{ status.summary.latest_local_date || '暂无数据' }}</strong><small>应有日期 {{ status.summary.expected_date || '待日历确认' }} · 不代表全部数据集齐全</small></article>
+        <article><span>数据检查</span><strong>{{ status.summary.data_ok }}<em>/ {{ status.summary.data_total }}</em></strong><small>项通过核验 · {{ status.summary.data_unknown }} 项时效待确认</small></article>
+        <article><span>同步任务</span><strong>{{ status.summary.jobs_ok }}<em>/ {{ status.summary.jobs_total }}</em></strong><small>项完成或已确认跳过 · 运行中 {{ runningJobs }} 项</small></article>
       </div>
-    </div>
+      <nav class="tabs" aria-label="系统管理分区"><button v-for="item in tabs" :key="item.key" :class="{ active: tab === item.key }" :aria-pressed="tab === item.key" @click="tab=item.key">{{ item.label }}</button><label class="auto-refresh"><input type="checkbox" v-model="autoRefresh" />每分钟刷新本地状态</label></nav>
 
-    <div v-if="error" class="error-message">{{ error }}</div>
-    <div v-if="loading && !status" class="loading-text">加载中...</div>
-
-    <template v-else-if="status">
-      <!-- 总览 -->
-      <div class="stats-row">
-        <div class="stat-card">
-          <div class="stat-label">数据库体积</div>
-          <div class="stat-value">{{ status.database.size_mb ?? '-' }} MB</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">缓存表</div>
-          <div class="stat-value">
-            <span class="ok-text">{{ countByStatus(status.tables, 'ok') }}</span> 正常
-            <template v-if="countByStatus(status.tables, 'stale')">
-              / <span class="warn-text">{{ countByStatus(status.tables, 'stale') }}</span> 滞后
-            </template>
-          </div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">定时任务</div>
-          <div class="stat-value">
-            <span class="ok-text">{{ countByStatus(status.cron_jobs, 'ok') }}</span> 正常
-            <template v-if="countByStatus(status.cron_jobs, 'error')">
-              / <span class="err-text">{{ countByStatus(status.cron_jobs, 'error') }}</span> 异常
-            </template>
-            <template v-if="countByStatus(status.cron_jobs, 'stale')">
-              / <span class="warn-text">{{ countByStatus(status.cron_jobs, 'stale') }}</span> 滞后
-            </template>
-          </div>
-        </div>
+      <div v-if="tab === 'overview'" class="section-stack">
+        <section class="panel"><div class="section-heading"><div><h2>需要关注</h2><p>优先处理影响数据可用性的问题。</p></div><button v-if="status.alerts.length" class="text-button" @click="tab='data'">查看数据与任务 →</button></div>
+          <div v-if="!status.alerts.length" class="empty">当前未发现需要处理的异常。</div>
+          <div v-else class="alerts"><article v-for="alert in shownAlerts" :key="alert.key" class="alert-item" :class="alert.severity"><span class="alert-mark">{{ alert.severity === 'error' ? '!' : '·' }}</span><div><h3>{{ alert.title }}</h3><p>{{ alert.detail }}</p><small>{{ alert.action }}</small></div></article></div>
+          <button v-if="status.alerts.length > 6" class="text-button show-more" @click="showAllAlerts=!showAllAlerts">{{ showAllAlerts ? '收起' : `查看其余 ${status.alerts.length-6} 项` }}</button>
+        </section>
+        <section class="panel"><div class="section-heading"><div><h2>Tushare 数据源诊断</h2><p>手动检查 7 个接口；普通刷新不调用数据源。采样成功不代表全市场已同步齐全。</p></div><span class="badge" :class="tone(status.diagnostics.status)">{{ status.diagnostics.fresh ? '最近 10 分钟内结果' : '待重新检查' }}</span></div>
+          <p v-if="checking" class="hint">正在分别检查日历、股票、指数、ETF 和三张财报，最长约一分钟；已有数据继续保留。</p>
+          <div v-if="status.diagnostics.checks.length" class="diagnostic-grid"><article v-for="check in status.diagnostics.checks" :key="check.key"><div class="row"><h3>{{ check.label }}</h3><span class="badge" :class="status.diagnostics.fresh ? tone(check.status) : 'muted'">{{ status.diagnostics.fresh ? statusText(check.status) : `上次${statusText(check.status)}` }}</span></div><p>{{ check.message }}</p><small>{{ check.sample_date ? `样本日期 ${sampleDate(check.sample_date)} · ` : '' }}{{ check.duration_ms }} ms</small><details><summary>接口详情</summary><code>{{ check.api }}</code><small v-if="check.kind"> · {{ errorKind(check.kind) }}</small></details></article></div>
+          <div v-else class="empty">尚未检查数据源。点击右上角“检查数据源”开始诊断。</div>
+        </section>
       </div>
 
-      <!-- 定时任务 -->
-      <div class="panel">
-        <div class="panel-title">定时任务</div>
-        <table class="result-table">
-          <thead>
-            <tr><th>状态</th><th>任务</th><th>计划</th><th>最近运行</th><th>日志</th></tr>
-          </thead>
-          <tbody>
-            <template v-for="job in status.cron_jobs" :key="job.log">
-              <tr>
-                <td><span class="badge" :class="badgeClass(job.status)">{{ statusText(job.status) }}</span></td>
-                <td>{{ job.name }}</td>
-                <td class="muted">{{ job.schedule }}</td>
-                <td class="muted">{{ formatTime(job.last_run) }}</td>
-                <td class="muted">{{ job.log }}</td>
-              </tr>
-              <tr v-if="job.error" class="error-row">
-                <td></td>
-                <td colspan="4">
-                  <div class="error-line">{{ job.error }}</div>
-                  <div v-for="(line, i) in job.last_lines" :key="i" class="log-line">{{ line }}</div>
-                </td>
-              </tr>
-            </template>
-          </tbody>
-        </table>
+      <div v-if="tab === 'data'" class="section-stack">
+        <section class="panel"><div class="section-heading"><div><h2>数据完整度</h2><p>依据官方交易日历，{{ status.calendar.ready_hour }}:00 后按当天收盘数据核验，此前按上一交易日核验。这是本软件的检查规则。</p></div><span class="badge" :class="tone(status.calendar.status)">{{ status.calendar.status === 'cached' ? '使用已验证日历' : '日历待确认' }}</span></div>
+          <p class="hint">核验日期 {{ status.summary.expected_date || '尚不能确定，不使用工作日推算' }} · 日历缓存于 {{ formatTime(status.calendar.fetched_at) }}。财务榜日期仅表示榜单计算日，财报校验结果见任务记录。</p>
+          <div class="table-wrap"><table><thead><tr><th>状态 / 数据</th><th>最新记录</th><th>核验日期</th><th>该日记录 / 参考数</th><th>核验说明</th></tr></thead><tbody><tr v-for="item in status.tables" :key="item.table"><td><span class="badge" :class="tone(item.status)">{{ statusText(item.status) }}</span><b>{{ item.label }}</b><small>{{ item.impact }}</small></td><td>{{ item.max_date || '—' }}</td><td>{{ item.checked_date || '—' }}<small v-if="!item.expected_date">时效待确认</small></td><td>{{ item.rows.toLocaleString() }}<span v-if="item.reference_rows !== null"> / {{ item.reference_rows.toLocaleString() }}</span><small v-if="item.coverage_pct !== null">参考覆盖 {{ item.coverage_pct }}%</small></td><td class="explanation">{{ item.message }}<details v-if="item.coverage_note"><summary>覆盖口径</summary><small>{{ item.coverage_note }}</small></details></td></tr></tbody></table></div>
+        </section>
+        <section class="panel"><div class="section-heading"><div><h2>同步任务</h2><p>以实际执行记录判断完成情况。旧日志、日志更新时间均不作为成功依据。</p></div></div>
+          <div class="jobs-grid"><article v-for="job in status.cron_jobs" :key="job.key" class="job-card"><div class="row"><h3>{{ job.name }}</h3><span class="badge" :class="tone(job.status)">{{ statusText(job.status) }}</span></div><p>{{ job.message }}</p><div class="job-times"><div><small>最近开始</small><span>{{ formatTime(job.last_run) }}</span></div><div><small>最近结束</small><span>{{ formatTime(job.record?.finished_at) }}</span></div><div><small>下次计划</small><span>{{ formatTime(job.next_run) }}</span></div></div>
+            <p v-if="job.record" class="counts">成功 {{ job.record.succeeded }} · 失败 {{ job.record.failed }} · 跳过 {{ job.record.skipped }} {{ job.record.unit || '项' }}<small>本次写入 / 覆盖 {{ job.record.written_rows.toLocaleString() }} 条</small></p>
+            <details><summary>计划与执行详情</summary><p class="hint">影响 {{ job.impact }}</p><p v-if="!job.schedule_known || !job.schedules.length" class="hint">未能确认此任务的 cron 计划，需核对服务器调度配置。</p><p v-for="plan in job.schedules" :key="plan.expression" class="plan">{{ scheduleLabel(plan.expression) }} <code>{{ plan.expression }}</code><small>{{ plan.timezone }}</small></p><p v-if="job.key === 'quotes'" class="hint">快照同步也可能由 K 线任务的前置步骤执行，以上显示实际匹配的计划。</p><p v-if="job.record?.updated_at" class="hint">执行记录更新于 {{ formatTime(job.record.updated_at) }}</p><p v-for="(line,index) in job.record?.errors || []" :key="index" class="job-error">{{ line }}</p><div v-if="job.record?.history?.length" class="history"><h4>此前执行</h4><div v-for="run in job.record.history" :key="run.started_at"><span>{{ formatTime(run.started_at) }}</span><span class="badge" :class="tone(run.status)">{{ statusText(run.status) }}</span><small>成功 {{ run.succeeded }} / 失败 {{ run.failed }}</small></div></div><h4>日志摘要</h4><small>日志更新 {{ formatTime(job.log_updated_at) }} · 仅供排查，不代表任务完成</small><pre v-if="job.log_excerpt.length">{{ job.log_excerpt.join('\n') }}</pre><p v-else class="hint">暂无可读取的日志。</p></details>
+          </article></div>
+        </section>
       </div>
 
-      <!-- 缓存表 -->
-      <div class="panel">
-        <div class="panel-title">数据缓存</div>
-        <table class="result-table">
-          <thead>
-            <tr><th>状态</th><th>数据</th><th>表</th><th>最新日期</th><th>行数</th></tr>
-          </thead>
-          <tbody>
-            <tr v-for="t in status.tables" :key="t.table">
-              <td><span class="badge" :class="badgeClass(t.status)">{{ statusText(t.status) }}</span></td>
-              <td>{{ t.label }}</td>
-              <td class="muted">{{ t.table }}</td>
-              <td class="muted">{{ t.max_date ?? '-' }}</td>
-              <td class="muted">{{ t.rows.toLocaleString() }}</td>
-            </tr>
-          </tbody>
-        </table>
+      <div v-if="tab === 'settings'" class="section-stack">
+        <section class="panel"><div class="section-heading"><div><h2>配置状态</h2><p>{{ status.configuration.note }}</p></div><small>版本 {{ status.runtime.version || '未知' }} · 服务启动 {{ formatTime(status.runtime.started_at) }}</small></div><div class="configuration-grid"><div><span>Tushare 凭据</span><strong>{{ status.configuration.tushare_configured ? '已配置，权限见诊断' : '未配置' }}</strong></div><div><span>登录验证</span><strong>{{ status.configuration.authentication_configured ? '已配置' : '未配置' }}</strong></div><div><span>公网访问白名单</span><strong>{{ status.configuration.public_host_configured ? '已配置' : '使用本地开发默认值' }}</strong></div></div></section>
+        <section class="panel"><div class="section-heading"><div><h2>常用配置</h2><p>保存后对后续数据请求、缓存清理和状态判断生效。已有缓存不会因接口失败而被空数据覆盖。</p></div><small>最近保存 {{ formatTime(status.configuration.preferences_saved_at) }}</small></div>
+          <form v-if="preferences" @submit.prevent="save"><fieldset :disabled="saving"><div class="preference-grid"><label v-for="field in fields" :key="field.key"><span>{{ field.label }}</span><div class="number-input"><input type="number" v-model.number="preferences[field.key]" :min="field.min" :max="field.max" :step="field.step || 1" required /><span>{{ field.unit }}</span></div><small>{{ field.help }}</small></label></div><div class="form-actions"><button class="button primary" :disabled="saving || !dirty" type="submit">{{ saving ? '保存中…' : '保存配置' }}</button><button class="button" :disabled="saving || !dirty" type="button" @click="discard">撤销未保存修改</button><small v-if="dirty" class="warning">有未保存的修改</small></div></fieldset></form>
+        </section>
+        <div class="maintenance-grid"><section class="panel"><div class="row"><h2>数据库与存储</h2><span class="badge" :class="tone(status.database.status)">{{ statusText(status.database.status) }}</span></div><strong class="large-value">{{ bytes(status.database.size_bytes) }}</strong><p>磁盘剩余 {{ bytes(status.database.free_bytes) }}<span v-if="status.database.free_percent !== null"> · {{ status.database.free_percent }}%</span></p><small>数据库 {{ status.database.name || '未知' }} · 余量低于 2 GB 或 5% 时提示</small></section><section class="panel"><div class="row"><h2>最近备份</h2><span class="badge" :class="tone(status.backup.status)">{{ statusText(status.backup.status) }}</span></div><strong class="large-value date-value">{{ formatTime(status.backup.created_at) }}</strong><p>{{ status.backup.message }}</p><small>最近校验 {{ formatTime(status.backup.verified_at) }} · {{ bytes(status.backup.size_bytes) }}</small><details v-if="status.backup.filename"><summary>备份文件</summary><code>{{ status.backup.filename }}</code></details></section><section class="panel"><div class="row"><h2>ETF 本地缓存</h2><span class="badge" :class="tone(status.cache.status)">{{ statusText(status.cache.status) }}</span></div><strong class="large-value">{{ status.cache.snapshots }}<em>个日线快照</em></strong><p>最新日期 {{ status.cache.latest_date || '暂无' }} · 占用 {{ bytes(status.cache.size_bytes) }}</p><small>基础资料 {{ status.cache.basic_available ? '有缓存' : '无缓存' }}。{{ status.cache.note }}</small></section></div>
       </div>
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { fetchSystemStatus, type SystemStatus } from '../api/client'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { checkSystemDataSource, fetchSystemStatus, saveSystemPreferences } from '../api/client'
+import type { SystemPreferences, SystemState, SystemStatus } from '../api/client'
 
-const status = ref<SystemStatus | null>(null)
-const loading = ref(false)
-const error = ref('')
-
-async function load() {
-  loading.value = true
-  error.value = ''
-  try {
-    status.value = await fetchSystemStatus()
-  } catch (err: any) {
-    error.value = err?.response?.data?.detail || '加载失败'
-  } finally {
-    loading.value = false
-  }
-}
-
-function countByStatus(items: { status: string }[], s: string) {
-  return items.filter((i) => i.status === s).length
-}
-
-function badgeClass(s: string) {
-  return { ok: 'badge-ok', stale: 'badge-warn', error: 'badge-err', missing: 'badge-muted', empty: 'badge-muted' }[s] || ''
-}
-
-function statusText(s: string) {
-  return { ok: '正常', stale: '滞后', error: '异常', missing: '缺失', empty: '空' }[s] || s
-}
-
-function formatTime(iso?: string | null) {
-  return iso ? iso.slice(0, 16).replace('T', ' ') : '-'
-}
-
-onMounted(load)
+const status=ref<SystemStatus|null>(null), loading=ref(false), checking=ref(false), saving=ref(false)
+const error=ref(''),operationError=ref(''),notice=ref(''),tab=ref('overview'),autoRefresh=ref(false),showAllAlerts=ref(false)
+const preferences=ref<SystemPreferences|null>(null),savedPreferences=ref<SystemPreferences|null>(null)
+const dirty=computed(()=>!!preferences.value && JSON.stringify(preferences.value)!==JSON.stringify(savedPreferences.value))
+const shownAlerts=computed(()=>showAllAlerts.value?status.value?.alerts:status.value?.alerts.slice(0,6))
+const runningJobs=computed(()=>status.value?.cron_jobs.filter(job=>job.status==='running').length || 0)
+const tabs=[{key:'overview',label:'运行概况'},{key:'data',label:'数据与任务'},{key:'settings',label:'配置与维护'}]
+const fields:{key:keyof SystemPreferences;label:string;min:number;max:number;step?:number;unit:string;help:string}[]=[
+  {key:'request_timeout',label:'接口请求超时',min:3,max:30,unit:'秒',help:'3–30 秒；避免请求长时间挂起'},
+  {key:'retry_cooldown',label:'故障重试间隔',min:10,max:300,unit:'秒',help:'10–300 秒；连接或服务异常后暂缓同一客户端的后续请求'},
+  {key:'data_ready_hour',label:'收盘数据核验起点',min:16,max:23,unit:'点 / 北京时间',help:'16–23 点；此前核验上一交易日，不代表上游承诺的发布时间'},
+  {key:'calendar_cache_seconds',label:'日历缓存有效期',min:3600,max:604800,unit:'秒',help:'1 小时–7 天；过期后尝试刷新，失败时保留覆盖完整的旧日历'},
+  {key:'etf_basic_cache_seconds',label:'ETF 资料缓存有效期',min:300,max:86400,unit:'秒',help:'5 分钟–1 天；到期后尝试更新基础资料'},
+  {key:'etf_daily_cache_seconds',label:'ETF 日线缓存有效期',min:60,max:3600,unit:'秒',help:'1–60 分钟；有效期不等于故障时旧缓存的保留期限'},
+  {key:'etf_snapshot_limit',label:'ETF 日线快照上限',min:20,max:365,unit:'个',help:'20–365 个；降低上限后，下次写入缓存时清理较旧快照'},
+]
+let statusController:AbortController|null=null,diagnosticController:AbortController|null=null,timer:ReturnType<typeof setInterval>|undefined,disposed=false
+function errorMessage(e:any,fallback:string){const detail=e?.response?.data?.detail;if(typeof detail==='string')return detail;if(Array.isArray(detail))return detail.map((item:any)=>`${fields.find(field=>field.key===item.loc?.[item.loc.length-1])?.label || '参数'}：${item.msg}`).join('；');return e?.message || fallback}
+async function load(){statusController?.abort();const request=new AbortController();statusController=request;loading.value=true;error.value='';try{const result=await fetchSystemStatus(request.signal);if(request.signal.aborted || disposed)return;if(!result.summary)throw new Error('系统管理接口正在更新，请稍后刷新');if(!preferences.value || !dirty.value){preferences.value={...result.preferences};savedPreferences.value={...result.preferences}}status.value=result}catch(e:any){if(!request.signal.aborted && !disposed)error.value=errorMessage(e,'本地状态读取失败')}finally{if(statusController===request)loading.value=false}}
+async function diagnose(){if(checking.value)return;checking.value=true;notice.value='';operationError.value='';diagnosticController=new AbortController();try{const report=await checkSystemDataSource(diagnosticController.signal);if(disposed)return;notice.value=report.status==='ok'?'接口采样检查通过；数据完整度请查看“数据与任务”。':'检查已完成，异常与待核验结果已列在下方。';tab.value='overview';await load()}catch(e:any){if(!disposed)operationError.value=errorMessage(e,'数据源检查失败')}finally{checking.value=false}}
+async function save(){if(!preferences.value || saving.value)return;saving.value=true;notice.value='';operationError.value='';try{const result=await saveSystemPreferences({...preferences.value});if(disposed)return;preferences.value={...result};savedPreferences.value={...result};notice.value='常用配置已保存，对后续请求和状态判断生效。';await load()}catch(e:any){if(!disposed)operationError.value=errorMessage(e,'配置保存失败')}finally{saving.value=false}}
+function discard(){if(savedPreferences.value)preferences.value={...savedPreferences.value}}
+function tone(value:SystemState){return ['ok','success','cached','skipped'].includes(value)?'good':['error','interrupted'].includes(value)?'bad':['warning','partial','stale','empty','missing'].includes(value)?'warning':value==='running'?'running':'muted'}
+function statusText(value:SystemState){const labels:Record<SystemState,string>={ok:'通过',warning:'需关注',error:'异常',unknown:'待确认',cached:'有缓存',empty:'无记录',partial:'部分缺失',stale:'滞后',success:'已完成',running:'运行中',skipped:'已跳过',missing:'无执行记录',unverified:'结果待核验',interrupted:'已中断'};return labels[value] || value}
+function formatTime(value?:string|null){if(!value)return '—';const date=new Date(value);return Number.isNaN(date.getTime())?'时间无效':new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(date)}
+function sampleDate(value:string){return /^\d{8}$/.test(value)?`${value.slice(0,4)}-${value.slice(4,6)}-${value.slice(6,8)}`:value}
+function bytes(value:number|null){if(value===null)return '—';return value>=1024**3?`${(value/1024**3).toFixed(2)} GB`:`${(value/1024**2).toFixed(1)} MB`}
+function errorKind(value:string){return ({upstream:'上游服务异常',connection:'连接失败',permission:'权限不足',auth:'认证失败',rate_limit:'频率受限',protocol:'数据格式异常',unconfigured:'尚未配置',empty:'未返回样本',api_error:'接口错误'} as Record<string,string>)[value] || value}
+function scheduleLabel(value:string){const parts=value.split(' ');if(parts.length===5 && /^\d+$/.test(parts[0]) && /^\d+$/.test(parts[1]) && parts[2]==='*' && parts[3]==='*'){const day=parts[4]==='1-5'?'工作日':parts[4]==='*'?'每日':'指定星期';return `${day} ${parts[1].padStart(2,'0')}:${parts[0].padStart(2,'0')}`}return '按服务器计划执行'}
+onMounted(()=>{load();timer=setInterval(()=>{if(autoRefresh.value && !loading.value && !checking.value && !saving.value && !document.hidden)load()},60000)})
+onUnmounted(()=>{disposed=true;statusController?.abort();diagnosticController?.abort();if(timer)clearInterval(timer)})
 </script>
 
 <style scoped>
-.page {
-  padding: 20px;
-  max-width: 1200px;
-}
-
-.page-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
-}
-
-.page-header h1 {
-  font-size: 20px;
-  color: #e5e7eb;
-}
-
-.actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.generated {
-  font-size: 12px;
-  color: #6b7280;
-}
-
-.stats-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.stat-card {
-  background: #1f2937;
-  border-radius: 10px;
-  padding: 14px 18px;
-}
-
-.stat-label {
-  font-size: 12px;
-  color: #9ca3af;
-  margin-bottom: 6px;
-}
-
-.stat-value {
-  font-size: 20px;
-  font-weight: 600;
-  color: #e5e7eb;
-}
-
-.ok-text { color: #22c55e; }
-.warn-text { color: #f59e0b; }
-.err-text { color: #ef4444; }
-
-.panel {
-  background: #1f2937;
-  border-radius: 10px;
-  padding: 18px;
-  margin-bottom: 16px;
-}
-
-.panel-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #d1d5db;
-  margin-bottom: 14px;
-}
-
-.result-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.result-table th {
-  text-align: left;
-  padding: 8px 10px;
-  color: #9ca3af;
-  font-weight: 500;
-  border-bottom: 1px solid #374151;
-}
-
-.result-table td {
-  padding: 8px 10px;
-  color: #e5e7eb;
-  border-bottom: 1px solid #111827;
-}
-
-.result-table .muted {
-  color: #9ca3af;
-}
-
-.badge {
-  padding: 2px 10px;
-  border-radius: 4px;
-  font-size: 12px;
-}
-
-.badge-ok { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
-.badge-warn { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
-.badge-err { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
-.badge-muted { background: #374151; color: #9ca3af; }
-
-.error-row td {
-  border-bottom: 1px solid #111827;
-  padding-top: 0;
-}
-
-.error-line {
-  color: #ef4444;
-  font-size: 12px;
-  margin-bottom: 6px;
-}
-
-.log-line {
-  color: #6b7280;
-  font-size: 11px;
-  font-family: monospace;
-  line-height: 1.5;
-}
-
-.btn-secondary {
-  padding: 8px 14px;
-  border-radius: 6px;
-  border: 1px solid #374151;
-  background: #1f2937;
-  color: #d1d5db;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.btn-secondary:hover:not(:disabled) {
-  border-color: #60a5fa;
-  color: #60a5fa;
-}
-
-.loading-text {
-  color: #9ca3af;
-  padding: 40px;
-  text-align: center;
-}
-
-.error-message {
-  background: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.4);
-  color: #ef4444;
-  border-radius: 8px;
-  padding: 10px 14px;
-  margin-bottom: 16px;
-}
+.system-workspace{max-width:1440px;margin:auto;padding:28px;font-variant-numeric:tabular-nums;color:#e2e8f0}.page-header,.header-actions,.section-heading,.row,.overview-strip,.overview-title,.form-actions{display:flex;align-items:center;gap:12px}.page-header,.section-heading,.row,.overview-strip{justify-content:space-between}.page-header{margin-bottom:24px;flex-wrap:wrap}.eyebrow{font-size:11px;letter-spacing:2px;color:#7dd3fc}h1{font-size:28px;letter-spacing:1px;margin:8px 0}h2{font-size:16px;margin:0}h3{font-size:14px;margin:0}h4{font-size:12px;margin:16px 0 8px}p{font-size:13px;color:#a8b5c9;line-height:1.7;margin:8px 0}small{font-size:12px;color:#94a3b8;line-height:1.7}code,pre{font-family:ui-monospace,monospace;font-size:11px}button{cursor:pointer}button:disabled{opacity:.45;cursor:default}.button{padding:9px 14px;border:1px solid #334155;background:#152035;color:#dce5f3;border-radius:8px;white-space:nowrap}.button:hover:not(:disabled){border-color:#60a5fa}.primary{background:#2563eb;border-color:#3b82f6;color:white}.text-button{border:0;background:none;color:#7dd3fc;padding:6px 0;font-size:12px}.overview-strip{border:1px solid #334155;border-radius:10px;padding:14px 18px;background:#111d30;margin-bottom:14px;flex-wrap:wrap}.overview-title i{width:8px;height:8px;background:currentColor;border-radius:50%;box-shadow:0 0 12px currentColor}.overview-title strong{font-size:14px}.overview-strip>span{font-size:11px;color:#94a3b8}.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:24px}.metrics article{border:1px solid #263449;background:linear-gradient(135deg,#142037,#101827);border-radius:12px;padding:18px}.metrics article>span{font-size:12px;color:#94a3b8}.metrics strong{display:block;font-size:25px;margin:10px 0}.metrics small{display:block;font-size:11px}em{font-size:13px;color:#94a3b8;font-style:normal;font-weight:400;margin-left:7px}.tabs{display:flex;align-items:center;gap:4px;border-bottom:1px solid #273449;margin-bottom:22px;flex-wrap:wrap}.tabs>button{border:0;border-bottom:2px solid transparent;background:none;color:#94a3b8;font-size:14px;padding:12px 18px}.tabs>button.active{color:#e0f2fe;border-bottom-color:#38bdf8}.auto-refresh{font-size:11px;color:#94a3b8;margin-left:auto;padding:10px 0;display:flex;gap:7px;align-items:center}.section-stack{display:grid;gap:20px}.panel{padding:22px;border:1px solid #263449;border-radius:12px;background:#111a2b;min-width:0}.section-heading{align-items:flex-start;margin-bottom:16px;flex-wrap:wrap}.section-heading p{margin-bottom:0;max-width:820px}.section-heading>small{font-size:11px}.alerts{display:grid;gap:10px}.alert-item{display:flex;gap:12px;padding:14px 16px;background:#1c2535;border-left:3px solid #d5a74c;border-radius:7px}.alert-item.error{border-left-color:#f87171;background:#30232c}.alert-mark{width:18px;height:18px;border:1px solid currentColor;border-radius:50%;display:grid;place-items:center;flex-shrink:0;font-size:12px;color:#fbbf24}.error .alert-mark{color:#fca5a5}.alert-item p{margin:6px 0}.alert-item small{color:#a8b7ce}.show-more{display:block;margin:12px auto 0}.diagnostic-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}.diagnostic-grid article,.job-card{padding:18px;background:#0c1423;border:1px solid #253248;border-radius:9px;min-width:0}.diagnostic-grid p{font-size:12px;word-break:break-word}.badge{display:inline-block;padding:3px 8px;border-radius:5px;font-size:11px;white-space:nowrap;background:#1d293b;line-height:1.6}.badge.good{background:#12372f}.badge.bad{background:#462b34}.badge.warning{background:#3b3322}.badge.running{background:#193553}.good{color:#6ee7b7}.bad{color:#fca5a5}.warning{color:#fcd38b}.running{color:#7dd3fc}.muted{color:#94a3b8}.hint{color:#94a3b8;font-size:12px}.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:12px}th,td{text-align:left;padding:14px 12px;border-bottom:1px solid #243247;vertical-align:top}th{color:#94a3b8;font-weight:400;background:#0d1524;white-space:nowrap}td{white-space:nowrap}td b{display:block;margin:8px 0 4px;font-size:13px;font-weight:500}td small{display:block;white-space:normal;font-size:11px;max-width:230px}.explanation{white-space:normal;min-width:230px;max-width:360px;line-height:1.7}.jobs-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.job-times{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:16px 0}.job-times span,.job-times small{display:block}.job-times span{font-size:11px;margin-top:5px}.counts{font-size:12px;color:#cbd5e1}.counts>small{display:block;font-size:11px;margin-top:4px}details{margin-top:12px;border-top:1px solid #263449;padding-top:10px}details details{border-top:0}summary{cursor:pointer;color:#8bb6df;font-size:11px;line-height:1.8}.plan code{margin-left:8px;color:#a5b8d0}.plan small{display:block}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#070e1a;color:#94a3b8;padding:12px;border-radius:6px;line-height:1.8;max-height:220px;overflow:auto}.history>div{display:flex;gap:10px;align-items:center;margin:8px 0;font-size:11px;flex-wrap:wrap}.job-error{font-size:11px;color:#fca5a5;overflow-wrap:anywhere}.configuration-grid,.maintenance-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.configuration-grid>div{padding:14px;background:#0c1423;border-radius:7px}.configuration-grid span,.configuration-grid strong{display:block;font-size:12px}.configuration-grid span{color:#94a3b8;margin-bottom:8px}.configuration-grid strong{font-weight:500}.preference-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:22px}.preference-grid label>span{display:block;font-size:12px;margin-bottom:9px}.preference-grid small{display:block;font-size:11px;margin-top:7px}.number-input{display:flex;align-items:center;border:1px solid #344259;background:#0b1424;border-radius:7px;overflow:hidden}.number-input:focus-within{border-color:#60a5fa}.number-input input{width:100%;min-width:50px;background:none;border:0;color:#e2e8f0;font-size:14px;padding:10px;outline:none}.number-input>span{font-size:11px;white-space:nowrap;color:#94a3b8;padding-right:10px}fieldset{border:0;padding:0;margin:0;min-width:0}.form-actions{border-top:1px solid #273449;padding-top:20px;margin-top:24px;flex-wrap:wrap}.maintenance-grid>.panel{padding:18px}.large-value{display:block;font-size:25px;margin:18px 0 12px}.date-value{font-size:17px}.feedback{padding:12px 16px;border:1px solid #334155;border-radius:8px;font-size:12px;line-height:1.8}.feedback.error{background:#35232c;color:#fca5a5;border-color:#6a3547}.feedback.good{background:#13332d;border-color:#265647}.empty{padding:28px 12px;text-align:center;color:#94a3b8;font-size:13px}@media(max-width:1100px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.maintenance-grid,.preference-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.job-times{grid-template-columns:1fr}.job-times>div{display:flex;justify-content:space-between;gap:8px}.job-times span{margin-top:0}}@media(max-width:700px){.system-workspace{padding:16px}.panel{padding:16px}.page-header h1{font-size:24px}.metrics{gap:10px}.metrics article{padding:14px}.metrics strong{font-size:21px}.tabs>button{padding:12px;font-size:13px}.auto-refresh{margin-left:0}.jobs-grid,.maintenance-grid,.preference-grid,.configuration-grid{grid-template-columns:1fr}.header-actions{width:100%}.header-actions .button{flex:1}.overview-strip{padding:12px}.diagnostic-grid{grid-template-columns:1fr}}
 </style>

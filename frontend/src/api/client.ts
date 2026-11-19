@@ -1027,12 +1027,17 @@ export async function deleteHolding(code: string): Promise<{ message: string }> 
   return data
 }
 
-// ==================== 系统监控 ====================
+// ==================== 系统管理 ====================
+
+export type SystemState = 'ok' | 'warning' | 'error' | 'unknown' | 'cached' | 'empty' | 'partial' | 'stale' | 'success' | 'running' | 'skipped' | 'missing' | 'unverified' | 'interrupted'
 
 export interface SystemDbInfo {
-  path: string | null
+  name: string | null
   size_bytes: number | null
   size_mb: number | null
+  free_bytes: number | null
+  free_percent: number | null
+  status: SystemState
 }
 
 export interface TableFreshness {
@@ -1040,29 +1045,73 @@ export interface TableFreshness {
   table: string
   max_date: string | null
   rows: number
-  age_days?: number
-  status: 'ok' | 'stale' | 'empty'
+  expected_date: string | null
+  checked_date: string | null
+  impact: string
+  reference_rows: number | null
+  coverage_pct: number | null
+  coverage_note: string
+  message: string
+  status: SystemState
 }
 
+export interface JobRunRecord {
+  started_at: string; finished_at: string | null; updated_at?: string; status: SystemState
+  succeeded: number; failed: number; skipped: number; written_rows: number; unit?: string; message: string
+  errors?: string[]; history?: JobRunRecord[]
+}
 export interface CronJobHealth {
+  key: string
   name: string
-  schedule: string
+  impact: string
+  schedules: { expression: string; timezone: string; previous: string | null; next: string | null }[]
+  schedule_known: boolean
+  next_run: string | null
   log: string
   last_run: string | null
-  age_hours: number | null
-  status: 'ok' | 'stale' | 'error' | 'missing'
-  last_lines: string[]
-  error: string | null
+  log_updated_at: string | null
+  log_excerpt: string[]
+  status: SystemState
+  message: string
+  record: JobRunRecord | null
+}
+export interface DataSourceReport {
+  status: SystemState; fresh: boolean; checked_at: string | null
+  checks: { key: string; label: string; api: string; status: SystemState; kind: string | null; message: string; sample_date: string | null; duration_ms: number }[]
+}
+export interface SystemPreferences {
+  request_timeout: number; retry_cooldown: number; data_ready_hour: number; calendar_cache_seconds: number
+  etf_basic_cache_seconds: number; etf_daily_cache_seconds: number; etf_snapshot_limit: number
 }
 
 export interface SystemStatus {
   generated_at: string
+  timezone: string
+  summary: { status: SystemState; alert_count: number; latest_local_date: string | null; expected_date: string | null; data_ok: number; data_total: number; data_unknown: number; jobs_ok: number; jobs_total: number }
+  calendar: { status: SystemState; fetched_at: string | null; ready_hour: number; today_open: boolean | null }
+  alerts: { key: string; severity: string; title: string; detail: string; action: string }[]
   database: SystemDbInfo
   tables: TableFreshness[]
   cron_jobs: CronJobHealth[]
+  diagnostics: DataSourceReport
+  cache: { status: SystemState; snapshots: number; latest_date: string | null; size_bytes: number; basic_available: boolean; note: string }
+  backup: { status: SystemState; created_at: string | null; verified_at: string | null; size_bytes: number | null; filename: string | null; message: string }
+  configuration: { tushare_configured: boolean; authentication_configured: boolean; public_host_configured: boolean; preferences_status: string; preferences_saved_at: string | null; note: string }
+  preferences: SystemPreferences
+  runtime: { status: SystemState; started_at: string; version: string | null }
 }
 
-export async function fetchSystemStatus(): Promise<SystemStatus> {
-  const { data } = await api.get('/system/status')
+export async function fetchSystemStatus(signal?: AbortSignal): Promise<SystemStatus> {
+  const { data } = await api.get('/system/status', { signal, timeout: 30000 })
+  return data
+}
+
+export async function checkSystemDataSource(signal?: AbortSignal): Promise<DataSourceReport> {
+  const { data } = await api.post('/system/diagnostics', undefined, { signal, timeout: 120000 })
+  return data
+}
+
+export async function saveSystemPreferences(preferences: SystemPreferences): Promise<SystemPreferences> {
+  const { data } = await api.put('/system/preferences', preferences)
   return data
 }
