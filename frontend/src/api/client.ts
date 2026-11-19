@@ -1063,7 +1063,7 @@ export interface TableFreshness {
 export interface JobRunRecord {
   started_at: string; finished_at: string | null; updated_at?: string; status: SystemState
   succeeded: number; failed: number; deferred?: number; skipped: number; written_rows: number; unit?: string; message: string
-  errors?: string[]; history?: JobRunRecord[]
+  errors?: string[]; deferred_items?: string[]; history?: JobRunRecord[]
 }
 export interface CronJobHealth {
   key: string

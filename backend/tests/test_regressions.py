@@ -194,6 +194,10 @@ class RegressionTests(unittest.TestCase):
             run=JobRun('daily',RuntimeStore(folder));run.record(skipped=2,confirmed_skip=True);run.finish()
             self.assertEqual(run.data['status'],'skipped')
             self.assertNotEqual(run.data['message'],'正在执行')
+            run=JobRun('daily',RuntimeStore(folder));run.record(deferred=2,message='sector pending');run.record(succeeded=1,message='dragon done');run.finish()
+            self.assertEqual(run.data['status'],'partial')
+            self.assertEqual(run.data['deferred_items'],['sector pending'])
+            self.assertIn('2',run.data['message'])
 
     def test_catchup_cron_is_idempotent_and_preserves_unrelated_jobs(self):
         original='SHELL=/bin/bash\n0 16 * * 1-5 python other_task.py\n'

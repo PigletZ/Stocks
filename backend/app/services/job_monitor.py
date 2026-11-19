@@ -49,7 +49,7 @@ class JobRun:
                      "finished_at": None, "updated_at": utc_now().isoformat(), "status": "running",
                      "pid": os.getpid(), "process_identity": process_identity(os.getpid()),
                      "succeeded": 0, "failed": 0, "deferred": 0, "skipped": 0, "written_rows": 0,
-                     "unit": "项", "message": "正在执行", "confirmed_skip": False, "errors": [], "history": history[:5]}
+                     "unit": "项", "message": "正在执行", "confirmed_skip": False, "errors": [], "deferred_items": [], "history": history[:5]}
         self._last_write = 0
 
     def write(self, force=False):
@@ -65,6 +65,8 @@ class JobRun:
             self.data["message"] = redact(message)[:250]
             if failed:
                 self.data["errors"] = (self.data["errors"] + [redact(message)[:250]])[-5:]
+            if deferred:
+                self.data["deferred_items"] = (self.data["deferred_items"] + [redact(message)[:250]])[-5:]
         if unit:
             self.data["unit"] = unit
         if confirmed_skip:
@@ -88,6 +90,8 @@ class JobRun:
                                     if self.data["deferred"] else "执行已结束，但没有可核验的成功结果；请检查无数据或跳过的原因")
         if self.data["status"] == "skipped" and self.data["message"] == "正在执行":
             self.data["message"] = "所需数据已存在或已确认无需执行，本次跳过"
+        if self.data["status"] == "partial":
+            self.data["message"] = f"已完成 {self.data['succeeded']} 项，失败 {self.data['failed']} 项，待发布/核验 {self.data['deferred']} 项；详情见执行记录"
         self.write(force=True)
 
 
