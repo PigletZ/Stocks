@@ -45,7 +45,10 @@ def refresh_financial(req: CodesRequest, session: Session = Depends(get_session)
     """对指定股票执行轻量校验，有新公告则三表全量回源"""
     codes = _validate_codes(req.codes, session)
     service = FinancialService()
-    refreshed = service.ensure_fresh(codes, session)
+    try:
+        refreshed = service.ensure_fresh(codes, session, strict=True)
+    except RuntimeError:
+        raise HTTPException(503, "财报未能完整刷新，已保留原缓存，请稍后重试")
     return {"refreshed": refreshed, "codes": codes}
 
 
@@ -70,7 +73,7 @@ def get_statements(
     service = FinancialService()
     # 报表查看前同样做一次轻量校验，保证披露当天可见
     service.ensure_fresh([code], session)
-    return service.get_statements(code, type, session)
+    return {**service.get_statements(code, type, session), "warnings": list(service.refresh_warnings.values())}
 
 
 @router.get("/highlight-rank")

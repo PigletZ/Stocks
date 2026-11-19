@@ -9,6 +9,7 @@ from sqlmodel import select
 from sqlmodel import Session
 
 from ..database import get_session
+from ..validation import parse_iso_date
 from ..services.review_service import ReviewService
 from ..services.review_workbench import ReviewWorkbench, today_shanghai
 from ..models import ReviewObservation, ReviewVerification, Stock
@@ -75,7 +76,7 @@ def verify_observation(observation_id: int, body: VerificationIn,
 
 def _parse_date(d: Optional[str]) -> Optional[date]:
     if d:
-        return datetime.strptime(d, "%Y-%m-%d").date()
+        return parse_iso_date(d)
     return None
 
 
@@ -120,6 +121,12 @@ def sync_review_data(
     """手动触发指定日期的涨停/龙虎榜数据落库"""
     service = ReviewService()
     target = _parse_date(date) or date.today()
-    limit_count = service.sync_limit_daily(target, session)
-    dragon_count = service.sync_dragon_tiger_daily(target, session)
+    try:
+        limit_count = service.sync_limit_daily(target, session, strict=True)
+        dragon_count = service.sync_dragon_tiger_daily(target, session, strict=True)
+    except RuntimeError:
+        session.rollback()
+        raise HTTPException(503, "复盘数据暂时无法同步，未能确认成功，请稍后重试")
+    if limit_count == 0 or dragon_count == 0:
+        raise HTTPException(503, "部分复盘数据尚未发布或未返回有效结果，已保留已有数据，请稍后重试")
     return {"trade_date": target.isoformat(), "limit_count": limit_count, "dragon_count": dragon_count}

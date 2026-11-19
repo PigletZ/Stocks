@@ -1100,13 +1100,20 @@ class OverviewService:
             # 上游失败或未发布时，不能先删掉已有数据。
             return 0
 
-        # 删除旧缓存与重新写入放在同一事务，避免与并发请求交错产生竞态
+        # 防止接口只返回局部数据时覆盖完整缓存。
         old_rows = session.exec(
             select(SectorDaily).where(
                 SectorDaily.sector_type == sector_type,
                 SectorDaily.trade_date == target_date,
             )
         ).all()
+        previous = session.exec(select(func.max(SectorDaily.trade_date)).where(
+            SectorDaily.trade_date < target_date, SectorDaily.sector_type == sector_type)).first()
+        prior_count = session.exec(select(func.count()).select_from(SectorDaily).where(
+            SectorDaily.trade_date == previous, SectorDaily.sector_type == sector_type)).one() if previous else 0
+        if len(rows) < max(len(old_rows), prior_count)*.85:
+            logger.warning("板块 %s %s 返回数量明显不足，保留原缓存", target_date, sector_type)
+            return 0
         for row in old_rows:
             session.delete(row)
 

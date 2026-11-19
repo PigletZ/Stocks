@@ -54,6 +54,7 @@ class FinancialService:
 
     def __init__(self):
         self._tushare_pro = None
+        self.refresh_warnings = {}
 
     def _get_tushare_pro(self):
         """使用 Tushare token 初始化 Pro 接口（懒加载）"""
@@ -118,16 +119,18 @@ class FinancialService:
         df = df.copy()
         df["_end"] = df["end_date"].apply(self._to_date)
         df["_fann"] = df["f_ann_date"].apply(self._to_date) if "f_ann_date" in df else None
+        if "ann_date" in df:
+            df["_fann"] = df["_fann"].where(df["_fann"].notna(), df["ann_date"].apply(self._to_date))
         df = df[df["_end"].notna()]
         result = []
         for end, grp in df.groupby("_end"):
             cand = grp
             if "report_type" in grp.columns:
-                merged = grp[grp["report_type"].astype(str) == "1"]
+                merged = grp[pd.to_numeric(grp["report_type"], errors="coerce") == 1]
                 if not merged.empty:
                     cand = merged
             if "_fann" in cand.columns and cand["_fann"].notna().any():
-                cand = cand.sort_values("_fann")
+                cand = cand.sort_values("_fann", na_position="first")
             row = cand.iloc[-1]
             fields = {}
             for col in df.columns:
@@ -142,13 +145,13 @@ class FinancialService:
                     fields[col] = str(v)
             result.append({
                 "end_date": end,
-                "f_ann_date": self._to_date(row.get("f_ann_date")),
+                "f_ann_date": row["_fann"] if pd.notna(row["_fann"]) else None,
                 "fields": fields,
             })
         result.sort(key=lambda x: x["end_date"])
         return result
 
-    def _upsert_rows(self, stmt_type: str, code: str, rows: List[dict], session: Session) -> int:
+    def _upsert_rows(self, stmt_type: str, code: str, rows: List[dict], session: Session, commit: bool = True) -> int:
         """原子 upsert（ON CONFLICT DO UPDATE），避免并发/重复写入撞唯一约束"""
         from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -180,7 +183,9 @@ class FinancialService:
             index_elements=["stock_code", "end_date"], set_=update_cols
         )
         session.execute(stmt)
-        session.commit()
+        if commit:
+            session.commit()
+            self.refresh_warnings.pop(code, None)
         return len(values)
 
     def refresh_stock(self, code: str, session: Session, strict: bool = False) -> Dict[str, int]:
@@ -188,21 +193,29 @@ class FinancialService:
         ts_code = self._code_to_ts_code(code)
         if not ts_code:
             return {}
-        counts = {}
-        for stmt_type in ("income", "balance", "cashflow"):
-            try:
+        try:
+            statements = {}
+            for stmt_type in ("income", "balance", "cashflow"):
                 df = self._fetch_statement(ts_code, stmt_type)
                 rows = self._dedupe(df)
-                if strict and not rows:
+                if not rows:
                     raise RuntimeError(f"{code} {stmt_type} 未返回可验证的财报")
-                counts[stmt_type] = self._upsert_rows(stmt_type, code, rows, session)
-            except Exception:
-                session.rollback()
-                if strict:
-                    raise
-                logger.exception("财务报表拉取失败: %s %s", code, stmt_type)
-                counts[stmt_type] = 0
-        return counts
+                statements[stmt_type] = rows
+            latest_period = statements["income"][-1]["end_date"]
+            if any(latest_period not in {row["end_date"] for row in rows} for rows in statements.values()):
+                raise RuntimeError(f"{code} 最新报告期的三张财报尚未齐全，保留原缓存")
+            counts = {kind: self._upsert_rows(kind, code, rows, session, commit=False)
+                      for kind, rows in statements.items()}
+            session.commit()
+            self.refresh_warnings.pop(code, None)
+            return counts
+        except Exception:
+            session.rollback()
+            self.refresh_warnings[code] = "最新披露未能完整核验，当前使用已有财报；缺失项保持空白"
+            if strict:
+                raise
+            logger.exception("三张财报未能完整刷新，已保留原缓存: %s", code)
+            return {kind: 0 for kind in ("income", "balance", "cashflow")}
 
     # ---------- 轻量校验 ----------
 
@@ -211,6 +224,7 @@ class FinancialService:
         refreshed = {}
         pro = self._get_tushare_pro()
         for code in codes:
+            self.refresh_warnings.pop(code, None)
             ts_code = self._code_to_ts_code(code)
             if not ts_code:
                 continue
@@ -218,34 +232,28 @@ class FinancialService:
                 df = pro.income(ts_code=ts_code)
                 time.sleep(0.15)
             except Exception:
+                self.refresh_warnings[code] = "数据源校验失败，当前使用已有财报，不能确认已是最新披露"
                 if strict:
                     raise
                 logger.exception("轻量校验失败，使用本地缓存: %s", code)
                 continue
             remote = self._dedupe(df if df is not None else pd.DataFrame())
             if not remote:
+                self.refresh_warnings[code] = "接口未返回有效财报，当前使用已有缓存"
                 if strict:
                     raise RuntimeError(f"{code} 未返回可验证的利润表")
                 continue
             latest = remote[-1]
-            db_latest = session.exec(
-                select(FinIncome)
-                .where(FinIncome.stock_code == code)
-                .order_by(FinIncome.end_date.desc())
-                .limit(1)
-            ).first()
-            need_refresh = (
-                db_latest is None
-                or latest["end_date"] > db_latest.end_date
-                or (
-                    latest["end_date"] == db_latest.end_date
-                    and latest["f_ann_date"]
-                    and db_latest.f_ann_date
-                    and latest["f_ann_date"] > db_latest.f_ann_date
-                )
-            )
+            period = latest["end_date"]
+            cached = [session.exec(select(model).where(model.stock_code == code, model.end_date == period)).first()
+                      for model in (FinIncome, FinBalance, FinCashflow)]
+            need_refresh = any(row is None for row in cached) or any(
+                latest["f_ann_date"] and (row.f_ann_date is None or latest["f_ann_date"] > row.f_ann_date)
+                for row in cached if row is not None)
             if need_refresh:
-                refreshed[code] = self.refresh_stock(code, session, strict=strict)
+                counts = self.refresh_stock(code, session, strict=strict)
+                if any(counts.values()):
+                    refreshed[code] = counts
         return refreshed
 
     # ---------- 派生指标 ----------
@@ -512,7 +520,8 @@ class FinancialService:
             })
             if latest_key and metrics.get(latest_key):
                 radar_input.append((code, stock.name if stock else code, metrics[latest_key]))
-        return {"stocks": stocks_out, "radar": self._build_radar(radar_input)}
+        return {"stocks": stocks_out, "radar": self._build_radar(radar_input),
+                "warnings": [f"{code}：{message}" for code, message in self.refresh_warnings.items()]}
 
     def get_statements(self, code: str, stmt_type: str, session: Session) -> dict:
         """单股报表原文：全科目 × 展示期，附带同比。

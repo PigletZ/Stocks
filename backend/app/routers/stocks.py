@@ -4,6 +4,7 @@ from typing import List, Optional
 from datetime import date, datetime, timedelta
 
 from ..database import get_session
+from ..validation import parse_iso_date
 from ..models import Stock, StockDailyQuote, Bar
 from ..services.tushare_stock_service import TushareStockService
 
@@ -12,7 +13,7 @@ router = APIRouter()
 
 def _parse_date(d: Optional[str]) -> Optional[date]:
     if d:
-        return datetime.strptime(d, "%Y-%m-%d").date()
+        return parse_iso_date(d)
     return None
 
 

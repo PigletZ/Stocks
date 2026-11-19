@@ -21,6 +21,7 @@
       <div v-else-if="!picked.length" class="hint">请选择要分析的股票</div>
 
       <template v-if="result && !loading">
+        <p v-if="result.warnings?.length" class="cache-notice" role="status">{{ result.warnings.join('；') }}</p>
         <section class="period-bar">
           <label>统一报告期 <select v-model="selectedPeriod"><option v-for="p in periods" :key="p" :value="p">{{ p }}</option></select></label>
           <span>收入、利润及现金流为年初至报告期末累计值；负债为期末值。</span>
@@ -48,7 +49,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import StockPicker from '../components/financial/StockPicker.vue'
 import HealthCard from '../components/financial/HealthCard.vue'
@@ -96,8 +97,14 @@ const loading = ref(false)
 const error = ref('')
 
 let reqSeq = 0
+let controller: AbortController | null = null
+let disposed = false
 
 async function analyze() {
+  controller?.abort()
+  if (disposed) return
+  const request = new AbortController()
+  controller = request
   const seq = ++reqSeq
   const codes = picked.value.map((s) => s.code)
   // 同步 URL，便于刷新/分享保留状态
@@ -111,8 +118,8 @@ async function analyze() {
   loading.value = true
   error.value = ''
   try {
-    const res = await fetchFinancialCompare(codes)
-    if (seq !== reqSeq) return // 已有更新的请求
+    const res = await fetchFinancialCompare(codes, request.signal)
+    if (seq !== reqSeq || disposed || request.signal.aborted) return
     result.value = res
     // 用后端返回的标准名称回填 chips（URL 恢复时名称是未知的）；
     // 名称有变化才回填并屏蔽 watch，避免回填再次触发分析形成循环
@@ -123,7 +130,7 @@ async function analyze() {
       restoring = false
     }
   } catch (e: any) {
-    if (seq !== reqSeq) return
+    if (seq !== reqSeq || disposed || request.signal.aborted) return
     result.value = null
     error.value = e?.response?.data?.detail || '分析失败，请稍后重试'
   } finally {
@@ -136,7 +143,7 @@ let restoring = false
 watch(() => picked.value.map(s => s.code).join(','), () => {
   if (restoring) return
   analyze()
-})
+}, { flush: 'sync' })
 
 // 亮点榜「加入对比」：加入选股并切回个股分析
 function onCompare(stock: { code: string; name: string }) {
@@ -146,19 +153,20 @@ function onCompare(stock: { code: string; name: string }) {
   activeTab.value = 'analysis'
 }
 
-onMounted(async () => {
-  const q = route.query.codes
+watch(() => route.query.codes, q => {
   const codes = (typeof q === 'string' ? q : '').split(',').filter(Boolean).slice(0, 10)
-  if (codes.length) {
+  if (codes.join(',') !== picked.value.map(stock => stock.code).join(',')) {
     restoring = true
     picked.value = codes.map((c) => ({ code: c, name: c }))
-    await analyze()
     restoring = false
+    analyze()
   }
-})
+}, { immediate: true })
+onUnmounted(() => { disposed = true; reqSeq++; controller?.abort() })
 </script>
 
 <style scoped>
+.cache-notice { margin:12px 0; padding:10px 14px; background:#2d2617; border-left:3px solid #fbbf24; color:#fcd34d; font-size:12px; line-height:1.7; }
 .period-bar { display:flex; flex-wrap:wrap; align-items:center; gap:14px; padding:16px 20px; border:1px solid #253045; border-radius:10px; color:#9ca3af; font-size:12px; background:#111827; }
 .period-bar select { background:#1f2937; color:#e5e7eb; padding:7px; border:1px solid #374151; border-radius:6px; margin-left:8px; }
 .detail-panel { background:#111827; border:1px solid #253045; border-radius:10px; padding:18px; color:#d1d5db; }.detail-panel summary { cursor:pointer; font-size:14px; }.detail-panel p { color:#9ca3af; font-size:12px; }

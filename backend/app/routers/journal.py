@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from sqlmodel import Session
 
 from ..database import get_session
+from ..validation import parse_iso_date
 from ..services.journal_service import JournalService
 
 router = APIRouter()
@@ -37,7 +38,7 @@ class TradeUpdate(BaseModel):
 
 
 def _parse_date(d: str) -> date:
-    return datetime.strptime(d, "%Y-%m-%d").date()
+    return parse_iso_date(d)
 
 
 # ==================== 复盘笔记 ====================
@@ -68,7 +69,7 @@ def delete_note(date: str = Query(..., description="日期 YYYY-MM-DD"), session
 
 @router.get("/note-dates")
 def list_note_dates(
-    year: int = Query(...),
+    year: int = Query(..., ge=1, le=9998),
     month: int = Query(..., ge=1, le=12),
     session: Session = Depends(get_session),
 ):

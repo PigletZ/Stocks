@@ -37,8 +37,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onUnmounted, ref } from 'vue'
 import { fetchStockList, type StockListItem } from '../../api/client'
+import type { PaginatedStockList } from '../../api/client'
+import { createLatestLoader } from '../../utils/latestLoader'
 
 const MAX = 10
 
@@ -55,39 +57,39 @@ const candidates = ref<StockListItem[]>([])
 const searching = ref(false)
 const dropdownVisible = ref(false)
 let searchTimer: ReturnType<typeof setTimeout> | null = null
+let blurTimer: ReturnType<typeof setTimeout> | null = null
+const loader = createLatestLoader<PaginatedStockList>({
+  resolve: result => {
+    const picked = new Set(props.modelValue.map(stock => stock.code))
+    candidates.value = result.items.filter(item => !picked.has(item.code) && !item.industry?.includes('银行'))
+  },
+  reject: () => { candidates.value = [] },
+  pending: value => { searching.value = value },
+})
 
 function onInput() {
   dropdownVisible.value = true
   if (searchTimer) clearTimeout(searchTimer)
+  loader.cancel()
+  candidates.value = []
   const kw = keyword.value.trim()
   if (!kw) {
     candidates.value = []
     return
   }
-  searchTimer = setTimeout(async () => {
-    searching.value = true
-    try {
-      const res = await fetchStockList(kw, undefined, 1, 12)
-      // 过滤银行股与已选股票
-      const picked = new Set(props.modelValue.map((s) => s.code))
-      candidates.value = res.items.filter(
-        (it) => !picked.has(it.code) && !(it.industry && it.industry.includes('银行'))
-      )
-    } catch {
-      candidates.value = []
-    } finally {
-      searching.value = false
-    }
-  }, 250)
+  searchTimer = setTimeout(() => loader.load(signal => fetchStockList(kw, undefined, 1, 12, 'code', 'asc', signal)), 250)
 }
 
 function onBlur() {
   // 延迟关闭，让 mousedown 先触发
-  setTimeout(() => (dropdownVisible.value = false), 150)
+  if (blurTimer) clearTimeout(blurTimer)
+  blurTimer = setTimeout(() => (dropdownVisible.value = false), 150)
 }
 
 function pick(item: StockListItem) {
-  if (props.modelValue.length >= MAX) return
+  if (props.modelValue.length >= MAX || props.modelValue.some(stock => stock.code === item.code)) return
+  if (searchTimer) clearTimeout(searchTimer)
+  loader.cancel()
   emit('update:modelValue', [...props.modelValue, { code: item.code, name: item.name }])
   keyword.value = ''
   candidates.value = []
@@ -99,6 +101,7 @@ function remove(code: string) {
     props.modelValue.filter((s) => s.code !== code)
   )
 }
+onUnmounted(() => { loader.dispose(); if (searchTimer) clearTimeout(searchTimer); if (blurTimer) clearTimeout(blurTimer) })
 </script>
 
 <style scoped>

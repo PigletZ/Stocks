@@ -32,7 +32,7 @@ class ReviewService:
 
     # ==================== 数据落库 ====================
 
-    def sync_limit_daily(self, target_date: date, session: Session) -> int:
+    def sync_limit_daily(self, target_date: date, session: Session, strict: bool = False) -> int:
         """同步指定交易日的涨跌停/炸板明细（limit_list_d），当天整体覆盖。
 
         数据未就绪（空表/异常）时返回 0 且不触碰已有数据。
@@ -42,9 +42,24 @@ class ReviewService:
             df = self._get_tushare_pro().limit_list_d(trade_date=date_str)
         except Exception as e:
             logger.warning("limit_list_d %s 拉取失败: %s", date_str, e)
+            if strict:
+                raise
             return 0
         if df is None or df.empty:
             return 0
+
+        if not {"ts_code", "trade_date", "limit"}.issubset(df.columns) or not df["trade_date"].astype(str).eq(date_str).all():
+            if strict:
+                raise RuntimeError("涨跌停明细格式或日期异常，已保留旧数据")
+            return 0
+        stat = session.exec(select(MarketDailyStat).where(MarketDailyStat.stat_date == target_date)).first()
+        if stat and stat.total > 0:
+            counts = df["limit"].value_counts()
+            if any(int(counts.get(kind, 0)) != expected for kind, expected in
+                   (("U", stat.limit_up), ("D", stat.limit_down), ("Z", stat.opened_limit))):
+                if strict:
+                    raise RuntimeError("涨跌停明细与市场统计不匹配，已保留旧数据")
+                return 0
 
         session.exec(delete(LimitUpDaily).where(LimitUpDaily.trade_date == target_date))
         rows = []
@@ -72,15 +87,22 @@ class ReviewService:
         logger.info("limit_up_daily %s 落库 %d 条", date_str, len(rows))
         return len(rows)
 
-    def sync_dragon_tiger_daily(self, target_date: date, session: Session) -> int:
+    def sync_dragon_tiger_daily(self, target_date: date, session: Session, strict: bool = False) -> int:
         """同步指定交易日的龙虎榜（top_list），当天整体覆盖。"""
         date_str = target_date.strftime("%Y%m%d")
         try:
             df = self._get_tushare_pro().top_list(trade_date=date_str)
         except Exception as e:
             logger.warning("top_list %s 拉取失败: %s", date_str, e)
+            if strict:
+                raise
             return 0
         if df is None or df.empty:
+            return 0
+
+        if not {"ts_code", "trade_date"}.issubset(df.columns) or not df["trade_date"].astype(str).eq(date_str).all():
+            if strict:
+                raise RuntimeError("龙虎榜格式或日期异常，已保留旧数据")
             return 0
 
         # 同一只票当天可能多条（不同上榜原因），按 code 聚合

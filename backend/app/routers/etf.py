@@ -5,6 +5,7 @@ from ..services.etf_dashboard import build_dashboard
 from typing import Optional
 
 from ..services.etf_service import EtfService
+from ..validation import parse_iso_date
 
 router = APIRouter()
 service = EtfService()
@@ -26,7 +27,7 @@ def get_dashboard(target_date: Optional[date] = Query(None, alias="date"), min_a
 
 def _parse_date(d: Optional[str]) -> date:
     if d:
-        return datetime.strptime(d, "%Y-%m-%d").date()
+        return parse_iso_date(d)
     return date.today()
 
 

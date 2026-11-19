@@ -39,7 +39,7 @@ class JobRun:
         self.key = key
         self.store = store or RuntimeStore()
         previous = self.store.read(f"job-{key}") or {}
-        fields = ("started_at", "finished_at", "status", "succeeded", "failed", "skipped", "written_rows", "message")
+        fields = ("started_at", "finished_at", "status", "succeeded", "failed", "deferred", "skipped", "written_rows", "message")
         history = previous.get("history", [])
         if not isinstance(history, list):
             history = []
@@ -48,7 +48,7 @@ class JobRun:
         self.data = {"key": key, "run_id": utc_now().isoformat(), "started_at": utc_now().isoformat(),
                      "finished_at": None, "updated_at": utc_now().isoformat(), "status": "running",
                      "pid": os.getpid(), "process_identity": process_identity(os.getpid()),
-                     "succeeded": 0, "failed": 0, "skipped": 0, "written_rows": 0,
+                     "succeeded": 0, "failed": 0, "deferred": 0, "skipped": 0, "written_rows": 0,
                      "unit": "项", "message": "正在执行", "confirmed_skip": False, "errors": [], "history": history[:5]}
         self._last_write = 0
 
@@ -58,8 +58,8 @@ class JobRun:
             self.store.write(f"job-{self.key}", self.data)
             self._last_write = time.monotonic()
 
-    def record(self, succeeded=0, failed=0, skipped=0, written_rows=0, message=None, unit=None, confirmed_skip=False):
-        for name, value in (("succeeded", succeeded), ("failed", failed), ("skipped", skipped), ("written_rows", written_rows)):
+    def record(self, succeeded=0, failed=0, deferred=0, skipped=0, written_rows=0, message=None, unit=None, confirmed_skip=False):
+        for name, value in (("succeeded", succeeded), ("failed", failed), ("deferred", deferred), ("skipped", skipped), ("written_rows", written_rows)):
             self.data[name] += value
         if message:
             self.data["message"] = redact(message)[:250]
@@ -76,13 +76,18 @@ class JobRun:
             self.record(failed=1, message=str(error))
         self.data["status"] = ("partial" if self.data["failed"] and self.data["succeeded"] else
                                "error" if self.data["failed"] else
+                               "partial" if self.data["deferred"] and self.data["succeeded"] else
+                               "unknown" if self.data["deferred"] else
                                "success" if self.data["succeeded"] else
                                "skipped" if self.data["skipped"] and self.data["confirmed_skip"] else "unknown")
         self.data["finished_at"] = utc_now().isoformat()
-        if not self.data["failed"]:
+        if not self.data["failed"] and not self.data["deferred"]:
             self.data["message"] = "执行完成" if self.data["succeeded"] else self.data["message"]
         if self.data["status"] == "unknown":
-            self.data["message"] = "执行已结束，但没有可核验的成功结果；请检查无数据或跳过的原因"
+            self.data["message"] = (f"{self.data['deferred']} 项数据仍待发布或核验，尚未完成补齐"
+                                    if self.data["deferred"] else "执行已结束，但没有可核验的成功结果；请检查无数据或跳过的原因")
+        if self.data["status"] == "skipped" and self.data["message"] == "正在执行":
+            self.data["message"] = "所需数据已存在或已确认无需执行，本次跳过"
         self.write(force=True)
 
 

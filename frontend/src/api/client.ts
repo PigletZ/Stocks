@@ -131,9 +131,11 @@ export async function fetchStockList(
   page_size = 50,
   sort_by = 'code',
   sort_order: 'asc' | 'desc' = 'asc',
+  signal?: AbortSignal,
 ): Promise<PaginatedStockList> {
   const { data } = await api.get('/stocks', {
     params: { search, industry, page, page_size, sort_by, sort_order },
+    signal,
   })
   return data
 }
@@ -469,9 +471,9 @@ export interface EtfItem {
   fund_type: string
   benchmark: string
   category: string
-  close: number
-  change_pct: number
-  amount: number
+  close: number | null
+  change_pct: number | null
+  amount: number | null
 }
 
 export interface EtfObservation {
@@ -497,7 +499,7 @@ export async function fetchEtfDashboard(date: string, minAmount: number, signal?
 export interface EtfListResponse {
   total: number
   items: EtfItem[]
-  effective_date: string
+  effective_date: string | null
 }
 
 export async function fetchEtfList(
@@ -746,6 +748,7 @@ export interface FinRadarSeries {
 }
 
 export interface FinCompareResult {
+  warnings?: string[]
   stocks: FinStockCompare[]
   radar: { dims: string[]; series: FinRadarSeries[] }
 }
@@ -758,20 +761,22 @@ export interface FinStatementItem {
 }
 
 export interface FinStatementResult {
+  warnings?: string[]
   periods: string[]
   items: FinStatementItem[]
 }
 
-export async function fetchFinancialCompare(codes: string[]): Promise<FinCompareResult> {
-  const { data } = await api.post('/financial/compare', { codes })
+export async function fetchFinancialCompare(codes: string[], signal?: AbortSignal): Promise<FinCompareResult> {
+  const { data } = await api.post('/financial/compare', { codes }, { signal, timeout: 120000 })
   return data
 }
 
 export async function fetchFinancialStatements(
   code: string,
-  type: 'income' | 'balance' | 'cashflow'
+  type: 'income' | 'balance' | 'cashflow',
+  signal?: AbortSignal,
 ): Promise<FinStatementResult> {
-  const { data } = await api.get('/financial/statements', { params: { code, type } })
+  const { data } = await api.get('/financial/statements', { params: { code, type }, signal, timeout: 120000 })
   return data
 }
 
@@ -1057,7 +1062,7 @@ export interface TableFreshness {
 
 export interface JobRunRecord {
   started_at: string; finished_at: string | null; updated_at?: string; status: SystemState
-  succeeded: number; failed: number; skipped: number; written_rows: number; unit?: string; message: string
+  succeeded: number; failed: number; deferred?: number; skipped: number; written_rows: number; unit?: string; message: string
   errors?: string[]; history?: JobRunRecord[]
 }
 export interface CronJobHealth {

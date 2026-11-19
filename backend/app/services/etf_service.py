@@ -330,7 +330,7 @@ class EtfService:
         effective_date = target_date if df_daily is not None and not df_daily.empty else None
 
         df_basic = self._get_etf_list_with_cache()
-        if df_basic.empty:
+        if df_basic.empty or df_daily is None or df_daily.empty:
             return {"total": 0, "items": [], "effective_date": effective_date.isoformat() if effective_date else None}
 
         # 合并日线数据
@@ -376,9 +376,9 @@ class EtfService:
                 "fund_type": str(row.get("fund_type", "")),
                 "benchmark": str(row.get("benchmark", "")),
                 "category": str(row.get("category", "")),
-                "close": float(row["close"]) if pd.notna(row.get("close")) else 0.0,
-                "change_pct": float(row["pct_chg"]) if pd.notna(row.get("pct_chg")) else 0.0,
-                "amount": float(row["amount"]) * 1000 if pd.notna(row.get("amount")) else 0.0,
+                "close": float(row["close"]) if pd.notna(row.get("close")) else None,
+                "change_pct": float(row["pct_chg"]) if pd.notna(row.get("pct_chg")) else None,
+                "amount": float(row["amount"]) * 1000 if pd.notna(row.get("amount")) else None,
             })
 
         return {

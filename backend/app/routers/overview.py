@@ -4,6 +4,7 @@ from sqlmodel import Session, select
 from typing import List, Optional
 
 from ..database import get_session
+from ..validation import parse_iso_date
 from ..services.dashboard_service import DashboardService
 from ..models import IndexDaily, RecentView, Stock, WatchlistItem
 from ..services.overview_service import OverviewService
@@ -21,7 +22,7 @@ def get_dashboard(
 
 def _parse_date(d: Optional[str]) -> date:
     if d:
-        return datetime.strptime(d, "%Y-%m-%d").date()
+        return parse_iso_date(d)
     return date.today()
 
 

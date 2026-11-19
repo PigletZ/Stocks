@@ -27,6 +27,7 @@
       </div>
     </div>
 
+    <p v-if="data?.warnings?.length && !loading" class="st-hint">{{ data.warnings.join('；') }}</p>
     <div v-if="loading" class="st-hint">加载中…</div>
     <div v-else-if="error" class="st-hint error">{{ error }}</div>
     <div v-else-if="!data || !data.items.length" class="st-hint">暂无报表数据</div>
@@ -55,7 +56,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { onUnmounted, ref, watch } from 'vue'
+import { createLatestLoader } from '../../utils/latestLoader'
 import {
   fetchFinancialStatements,
   type FinStatementResult,
@@ -79,27 +81,26 @@ const error = ref('')
 
 // 缓存已加载的报表: `${code}:${type}`
 const cache = new Map<string, FinStatementResult>()
+const loader = createLatestLoader<FinStatementResult>({
+  resolve: value => { data.value = value },
+  reject: (e: any) => { error.value = e?.response?.data?.detail || '加载失败'; data.value = null },
+  pending: value => { loading.value = value },
+})
 
 async function load() {
-  if (!activeCode.value) return
-  const key = `${activeCode.value}:${activeType.value}`
-  const hit = cache.get(key)
-  if (hit) {
-    data.value = hit
-    return
-  }
-  loading.value = true
+  data.value = null
   error.value = ''
-  try {
-    const res = await fetchFinancialStatements(activeCode.value, activeType.value)
+  const code = activeCode.value, type = activeType.value
+  if (!code) { loader.cancel(); return }
+  const key = `${code}:${type}`
+  await loader.load(async signal => {
+    const hit = cache.get(key)
+    if (hit) return hit
+    const res = await fetchFinancialStatements(code, type, signal)
+    if (signal.aborted) return res
     cache.set(key, res)
-    data.value = res
-  } catch (e: any) {
-    error.value = e?.response?.data?.detail || '加载失败'
-    data.value = null
-  } finally {
-    loading.value = false
-  }
+    return res
+  })
 }
 
 function switchStock(code: string) {
@@ -115,6 +116,8 @@ function switchType(t: 'income' | 'balance' | 'cashflow') {
 watch(
   () => props.stocks,
   (ss) => {
+    loader.cancel()
+    cache.clear()
     if (!ss.length) {
       activeCode.value = ''
       data.value = null
@@ -122,11 +125,12 @@ watch(
     }
     if (!ss.some((s) => s.code === activeCode.value)) {
       activeCode.value = ss[0].code
-      load()
     }
+    load()
   },
   { immediate: true }
 )
+onUnmounted(loader.dispose)
 
 function fmtVal(v: number | null): string {
   if (v === null || v === undefined) return '-'

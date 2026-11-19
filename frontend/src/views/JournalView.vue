@@ -1,5 +1,6 @@
 <template>
   <div class="page">
+    <p v-if="dataError" class="error-message" role="alert">{{ dataError }}</p>
     <div class="page-header">
       <h1>复盘日志</h1>
       <div class="tab-nav">
@@ -15,19 +16,19 @@
     <div class="stats-row">
       <div class="stat-card">
         <div class="stat-label">累计已实现盈亏</div>
-        <div class="stat-value" :class="changeClass(stats.total_realized)">{{ fmtMoney(stats.total_realized) }}</div>
+        <div class="stat-value" :class="statsReady ? changeClass(stats.total_realized) : ''">{{ statsReady ? fmtMoney(stats.total_realized) : '—' }}</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">累计有效卖出胜率（{{ stats.win_count }}胜 / {{ stats.loss_count }}负）</div>
-        <div class="stat-value">{{ stats.win_rate !== null ? stats.win_rate + '%' : '-' }}</div>
+        <div class="stat-label">累计有效卖出胜率<template v-if="statsReady">（{{ stats.win_count }}胜 / {{ stats.loss_count }}负）</template></div>
+        <div class="stat-value">{{ statsReady && stats.win_rate !== null ? stats.win_rate + '%' : '—' }}</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">累计买入 / 卖出次数</div>
-        <div class="stat-value">{{ stats.buy_count }} / {{ stats.sell_count }}</div>
+        <div class="stat-value">{{ statsReady ? stats.buy_count+' / '+stats.sell_count : '—' }}</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">累计费用</div>
-        <div class="stat-value">{{ fmtMoney(stats.total_fee) }}</div>
+        <div class="stat-value">{{ statsReady ? fmtMoney(stats.total_fee) : '—' }}</div>
       </div>
     </div>
 
@@ -175,7 +176,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { createLatestLoader } from '../utils/latestLoader'
 import { useRoute, onBeforeRouteLeave } from 'vue-router'
 import {
   createJournalTrade,
@@ -193,6 +195,9 @@ import {
 } from '../api/client'
 
 const tab = ref<'note' | 'trades' | 'positions'>('note')
+const dataError = ref('')
+const statsReady = ref(false)
+let statsRequest = 0
 const stats = ref<JournalStats>({ total_realized: 0, win_count: 0, loss_count: 0, win_rate: null, sell_count: 0, buy_count: 0, total_fee: 0 })
 
 // ===== 日历与笔记 =====
@@ -216,6 +221,10 @@ const noteExists = ref(false)
 const saving = ref(false)
 const savedTip = ref(false)
 const dayTrades = ref<JournalTrade[]>([])
+const monthLoader = createLatestLoader<Awaited<ReturnType<typeof fetchNoteDates>>>({
+  resolve: data => { noteDates.value = new Set(data.note_dates); tradeDates.value = new Set(data.trade_dates) },
+  reject: () => { dataError.value = '日历标记刷新失败，当前标记可能不完整，请刷新后核对。' },
+})
 
 function formatDate(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -252,9 +261,8 @@ const calendarCells = computed(() => {
 })
 
 async function loadMonthMarks() {
-  const data = await fetchNoteDates(calYear.value, calMonth.value)
-  noteDates.value = new Set(data.note_dates)
-  tradeDates.value = new Set(data.trade_dates)
+  const year = calYear.value, month = calMonth.value
+  await monthLoader.load(() => fetchNoteDates(year, month))
 }
 
 function shiftMonth(delta: number) {
@@ -303,15 +311,20 @@ async function onSaveNote() {
 
 async function onDeleteNote() {
   if (!confirm('确认删除服务器上的这一天笔记？')) return
-  const date = selectedDate.value
-  await deleteNote(date)
-  if (date !== selectedDate.value) return
-  serverContent.value = ''; serverCodes.value = ''
-  noteContent.value = ''
-  noteCodes.value = ''
-  noteExists.value = false
-  storeDraft()
-  loadMonthMarks()
+  const date = selectedDate.value, content = noteContent.value, codes = noteCodes.value
+  try {
+    await deleteNote(date)
+    if (date !== selectedDate.value) return
+    serverContent.value = ''; serverCodes.value = ''
+    if (noteContent.value === content && noteCodes.value === codes) {
+      noteContent.value = ''; noteCodes.value = ''
+    } else noteError.value = '服务器笔记已删除；删除期间的新编辑已保留为草稿。'
+    noteExists.value = false
+    storeDraft()
+    await loadMonthMarks()
+  } catch (error: any) {
+    if (date === selectedDate.value) noteError.value = error?.response?.data?.detail || '删除结果未能确认，请刷新核对；本地草稿保留。'
+  }
 }
 
 // ===== 交易台账 =====
@@ -319,6 +332,10 @@ const trades = ref<JournalTrade[]>([])
 const filterCode = ref('')
 const adding = ref(false)
 const formError = ref('')
+const tradesLoader = createLatestLoader<JournalTrade[]>({
+  resolve: result => { trades.value = result },
+  reject: () => { dataError.value = '交易列表刷新失败，请刷新核对；此提示不表示刚提交的交易失败。' },
+})
 const form = reactive({
   code: '',
   direction: 'buy' as 'buy' | 'sell',
@@ -330,12 +347,17 @@ const form = reactive({
 })
 
 async function loadTrades() {
-  trades.value = await fetchJournalTrades(filterCode.value || undefined)
+  const code = filterCode.value || undefined
+  trades.value = []
+  await tradesLoader.load(() => fetchJournalTrades(code))
 }
 
 async function onAddTrade() {
+  if (adding.value) return
   adding.value = true
   formError.value = ''
+  dataError.value = ''
+  let committed = false
   try {
     await createJournalTrade({
       stock_code: form.code.trim(),
@@ -346,6 +368,7 @@ async function onAddTrade() {
       traded_at: new Date(form.traded_at).toISOString(),
       note: form.note || null,
     })
+    committed = true
     form.code = ''
     form.price = null
     form.quantity = null
@@ -353,7 +376,7 @@ async function onAddTrade() {
     form.note = ''
     await Promise.all([loadTrades(), loadStats(), loadMonthMarks()])
   } catch (err: any) {
-    formError.value = err?.response?.data?.detail || '添加失败'
+    formError.value = committed ? '交易已成功保存，但页面刷新失败；请刷新核对，不要重复提交。' : err?.response?.data?.detail || '添加结果未能确认，请先刷新核对，避免重复提交。'
   } finally {
     adding.value = false
   }
@@ -362,11 +385,15 @@ async function onAddTrade() {
 async function onDeleteTrade(id: number) {
   if (!confirm('确认删除这条交易记录？')) return
   formError.value = ''
+  dataError.value = ''
+  let committed = false
   try {
     await deleteJournalTrade(id)
+    committed = true
+    trades.value = trades.value.filter(trade => trade.id !== id)
     await Promise.all([loadTrades(), loadStats(), loadMonthMarks()])
   } catch (error: any) {
-    formError.value = error?.response?.data?.detail || '删除失败，记录仍保留。'
+    formError.value = committed ? '记录已删除，但页面刷新失败；请刷新核对。' : error?.response?.data?.detail || '删除结果未能确认，请先刷新核对。'
   }
 }
 
@@ -378,13 +405,16 @@ async function loadPositions() {
 }
 
 async function loadStats() {
-  stats.value = await fetchJournalStats()
+  const request = ++statsRequest
+  statsReady.value = false
+  try { const result = await fetchJournalStats(); if (request === statsRequest) { stats.value = result; statsReady.value = true } }
+  catch (error) { if (request === statsRequest) { statsReady.value = false; throw error } }
 }
 
 function switchTab(t: 'note' | 'trades' | 'positions') {
   tab.value = t
   if (t === 'trades') loadTrades()
-  if (t === 'positions') loadPositions()
+  if (t === 'positions') loadPositions().catch(() => { dataError.value = '持仓加载失败，请刷新重试。' })
 }
 
 function changeClass(n: number | null | undefined) {
@@ -417,13 +447,15 @@ onMounted(() => {
   const now = new Date()
   now.setMinutes(now.getMinutes() - now.getTimezoneOffset())
   form.traded_at = now.toISOString().slice(0, 16)
-  loadStats()
+  loadStats().catch(() => { dataError.value = '交易统计加载失败，请刷新重试。' })
   loadMonthMarks()
   selectDate(selectedDate.value)
 })
+onUnmounted(() => { noteRequest++; statsRequest++; monthLoader.dispose(); tradesLoader.dispose() })
 </script>
 
 <style scoped>
+.error-message { padding:10px 14px; color:#fca5a5; background:#35232c; border:1px solid #6a3547; border-radius:6px; font-size:12px; line-height:1.8; }
 .page {
   padding: 20px;
   max-width: 1400px;

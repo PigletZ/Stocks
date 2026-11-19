@@ -22,6 +22,13 @@ class JournalService:
     def _utc(value):
         return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
 
+    @staticmethod
+    def _lock_history(session):
+        """将读取持仓校验和写入置于同一个 SQLite 写事务，防止并发卖出各自通过。"""
+        connection = session.connection()
+        if connection.dialect.name == "sqlite" and not connection.connection.driver_connection.in_transaction:
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+
     def _validate_history(self, session, code, replaced_id=None, candidate=None):
         rows = list(session.exec(select(TradeJournal).where(TradeJournal.stock_code == code)).all())
         rows = [r for r in rows if r.id != replaced_id]
@@ -126,6 +133,7 @@ class JournalService:
             raise ValueError("direction 必须是 buy 或 sell")
         if price <= 0 or quantity <= 0:
             raise ValueError("价格和数量必须大于 0")
+        self._lock_history(session)
         trade = TradeJournal(
             stock_code=stock_code,
             direction=direction,
@@ -143,12 +151,13 @@ class JournalService:
         return self._trade_item(trade, names.get(stock_code, ""))
 
     def update_trade(self, trade_id: int, session: Session, **fields) -> Optional[dict]:
+        self._lock_history(session)
         trade = session.get(TradeJournal, trade_id)
         if not trade:
             return None
         candidate = TradeJournal(**trade.model_dump())
         for k in ("stock_code", "direction", "price", "quantity", "fee", "traded_at", "note"):
-            if k in fields and fields[k] is not None:
+            if k in fields and (fields[k] is not None or k == "note"):
                 setattr(candidate, k, fields[k])
         candidate.traded_at = self._utc(candidate.traded_at)
         for code in {trade.stock_code, candidate.stock_code}:
@@ -162,6 +171,7 @@ class JournalService:
         return self._trade_item(trade, names.get(trade.stock_code, ""))
 
     def delete_trade(self, trade_id: int, session: Session) -> bool:
+        self._lock_history(session)
         trade = session.get(TradeJournal, trade_id)
         if not trade:
             return False
