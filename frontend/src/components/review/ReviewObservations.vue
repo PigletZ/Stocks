@@ -12,7 +12,7 @@
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <div class="filters"><select v-model="filter"><option value="all">全部记录</option><option value="pending">待验证 / 继续观察</option><option value="due">已到验证期限</option></select><span>{{ filtered.length }} 条</span></div>
     <p v-if="!filtered.length" class="empty">暂无记录。可从下方强势股明细点击“关注”，从今天开始积累判断。</p>
-    <article v-for="row in filtered" :key="row.id" class="observation">
+    <article v-for="row in filtered" :key="row.id" :id="`review-observation-${row.id}`" class="observation">
       <header><button class="link" @click="$emit('open',row.code,row.name)">{{ row.name }} {{ row.code }}</button><span>{{ row.observation_date }} → {{ row.deadline }}</span><b>{{ row.verdict }}</b></header>
       <p><strong>原始理由</strong> {{ row.reason }}</p><p><strong>验证条件</strong> {{ row.criterion }}</p>
       <div class="facts"><span>关注日收盘 {{ row.base_close ?? '—' }}</span><span>所选日收盘 {{ row.close ?? '—' }}</span><span>价格变化 {{ row.price_change == null ? '—' : row.price_change + '%' }}</span></div>
@@ -20,15 +20,17 @@
       <p v-if="row.explanation"><strong>验证依据</strong> {{ row.explanation }}</p>
       <button @click="edit(row)">记录 {{ date }} 的验证</button>
       <form v-if="editing === row.id" class="form" @submit.prevent="verify(row.id)"><select v-model="verdict"><option>符合预期</option><option>不符合预期</option><option>继续观察</option></select><textarea v-model="explanation" maxlength="2000" required placeholder="对照原始条件，说明哪些事实支持你的结论。"></textarea><button :disabled="saving">保存验证</button><button type="button" @click="editing=null">取消</button></form>
+      <ReviewObservationAssistant :date="date" :observation="row" :entry="assistant?.entries.find(entry=>entry.observation_id===row.id)" :ai="assistant?.ai" @changed="$emit('assistantChanged')" />
     </article>
   </section>
 </template>
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { createReviewObservation, verifyReviewObservation } from '../../api/client'
-import type { ReviewObservation } from '../../api/client'
-const props=defineProps<{date:string;rows:ReviewObservation[];prefill?:string}>()
-const emit=defineEmits<{saved:[];open:[code:string,name:string]}>()
+import type { ReviewAssistantData, ReviewObservation } from '../../api/client'
+import ReviewObservationAssistant from './ReviewObservationAssistant.vue'
+const props=defineProps<{date:string;rows:ReviewObservation[];prefill?:string;assistant?:ReviewAssistantData|null}>()
+const emit=defineEmits<{saved:[];open:[code:string,name:string];assistantChanged:[]}>()
 const showForm=ref(false),saving=ref(false),error=ref(''),filter=ref('pending'),editing=ref<number|null>(null),verdict=ref('继续观察'),explanation=ref('')
 const form=reactive({code:'',reason:'',criterion:'',deadline:props.date})
 watch(()=>props.prefill,code=>{if(code){form.code=code;showForm.value=true}})
@@ -38,6 +40,8 @@ function localTime(value:string|null){return value?new Date(value).toLocaleStrin
 function edit(row:ReviewObservation){editing.value=row.id;verdict.value=row.verdict==='待验证'?'继续观察':row.verdict;explanation.value=row.explanation}
 async function create(){saving.value=true;error.value='';try{await createReviewObservation({...form,observation_date:props.date});form.code='';form.reason='';form.criterion='';showForm.value=false;emit('saved')}catch(e:any){error.value=e?.response?.data?.detail||'保存失败'}finally{saving.value=false}}
 async function verify(id:number){saving.value=true;error.value='';try{await verifyReviewObservation(id,props.date,verdict.value,explanation.value);editing.value=null;emit('saved')}catch(e:any){error.value=e?.response?.data?.detail||'保存失败'}finally{saving.value=false}}
+async function focus(id:number){filter.value='all';await nextTick();document.getElementById(`review-observation-${id}`)?.scrollIntoView({behavior:'smooth',block:'start'})}
+defineExpose({focus})
 </script>
 <style scoped>
 .panel{background:#111827;border:1px solid #253045;border-radius:12px;padding:22px}.section-header,header,.facts,.filters{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.section-header{justify-content:space-between}h2{margin:0 0 7px;font-size:17px;color:#fff}small,.facts,.filters,header span{font-size:12px;color:#9ca3af;line-height:1.8}p{font-size:13px;color:#d1d5db;line-height:1.9;white-space:pre-wrap;overflow-wrap:anywhere}.notice{color:#9ca3af;font-size:12px}.observation{background:#0b1220;border-radius:8px;padding:18px;margin-top:14px}header b{color:#93c5fd;font-size:12px}.form{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}.form textarea{width:100%;min-height:70px}button,input,select,textarea{background:#111827;border:1px solid #374151;border-radius:6px;color:#d1d5db;padding:8px 12px}button{cursor:pointer}.link{color:#60a5fa;border:0;padding:0}label{font-size:12px;color:#9ca3af}.error{color:#fca5a5}.empty{color:#9ca3af;text-align:center;padding:24px}.filters{margin-top:16px}button:disabled{opacity:.5}

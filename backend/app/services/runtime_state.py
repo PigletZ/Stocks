@@ -19,7 +19,7 @@ def utc_now():
 
 def redact(value):
     value = str(value)
-    for secret in (settings.tushare_token, settings.auth_password, settings.auth_secret):
+    for secret in (settings.tushare_token, settings.auth_password, settings.auth_secret, settings.ai_api_key):
         if secret:
             value = value.replace(secret, "[已隐藏]")
     return re.sub(r"(?i)\b(token|password|secret|authorization)\s*[:=]\s*[^\s,;]+", r"\1=[已隐藏]", value)

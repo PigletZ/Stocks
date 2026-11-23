@@ -898,6 +898,54 @@ export async function verifyReviewObservation(id: number, date: string, verdict:
   return data
 }
 
+export interface ReviewCondition {
+  id: number; effective_date: string; kind: 'end_change' | 'hold_change'; operator: 'ge' | 'le'
+  threshold_pct: string; note: string; created_at: string; description: string
+}
+export interface ReviewEvaluation {
+  status: 'not_configured' | 'pending' | 'met' | 'not_met' | 'unknown'; label: string; message: string
+  expected_samples: number | null; valid_samples: number | null; missing_dates: string[]
+  first_violation: string | null; end_date: string | null; end_change_pct: number | null
+}
+export interface ReviewFact { id: string; label: string; value: unknown }
+export interface ReviewAuditItem { text: string; evidence_ids: string[] }
+export interface ReviewAudit {
+  id: number; date: string; created_at: string; model: string; stale: boolean; cached?: boolean
+  result: { supporting_evidence: ReviewAuditItem[]; counter_evidence: ReviewAuditItem[]; uncertainties: ReviewAuditItem[]; next_checks: ReviewAuditItem[] }
+  facts: ReviewFact[]
+}
+export interface ReviewAssistantEntry {
+  observation_id: number; code: string; rule: ReviewCondition | null; evaluation: ReviewEvaluation; audit: ReviewAudit | null
+}
+export interface ReviewReminder {
+  key: string; kind: string; level: 'warning' | 'attention' | 'info'; title: string; message: string
+  observation_id: number; code: string; deadline: string; hidden: boolean; snooze_until: string | null
+}
+export interface ReviewAssistantData {
+  date: string; ai: { configured: boolean; model: string | null; message: string }; entries: ReviewAssistantEntry[]
+  reminders: ReviewReminder[]; active_count: number; scope_count: number
+}
+export async function fetchReviewAssistant(date: string, signal?: AbortSignal): Promise<ReviewAssistantData> {
+  const { data } = await api.get('/review/assistant', { params: { date }, signal })
+  return data
+}
+export async function confirmReviewCondition(id: number, body: { effective_date: string; kind: string; operator: string; threshold_pct: string; note: string }): Promise<ReviewCondition> {
+  const { data } = await api.post(`/review/observations/${id}/conditions`, body)
+  return data
+}
+export async function fetchReviewConditions(id: number, date: string, signal?: AbortSignal): Promise<ReviewCondition[]> {
+  const { data } = await api.get(`/review/observations/${id}/conditions`, { params: { date }, signal })
+  return data
+}
+export async function auditReviewObservation(id: number, date: string, force = false, signal?: AbortSignal): Promise<ReviewAudit> {
+  const { data } = await api.post(`/review/observations/${id}/audit`, { date, force }, { timeout: 110000, signal })
+  return data
+}
+export async function updateReviewReminder(key: string, date: string, action: 'read' | 'snooze' | 'reset', snooze_until?: string) {
+  const { data } = await api.put(`/review/reminders/${key}`, { date, action, snooze_until })
+  return data
+}
+
 export interface EmotionItem {
   date: string
   limit_up: number

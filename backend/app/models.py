@@ -196,6 +196,42 @@ class ReviewVerification(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class ReviewCondition(SQLModel, table=True):
+    """经用户确认的量化条件；修改追加新版本，不覆盖原始关注文本。"""
+    __tablename__ = "review_condition"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    observation_id: int = Field(foreign_key="review_observation.id", index=True)
+    effective_date: date = Field(index=True)
+    kind: str  # end_change / hold_change
+    operator: str  # ge / le
+    threshold_pct: str  # Decimal 百分比文本，避免边界比较的浮点误差
+    note: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ReviewReminderState(SQLModel, table=True):
+    __tablename__ = "review_reminder_state"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    reminder_key: str = Field(index=True)
+    effective_date: date = Field(index=True)
+    snooze_until: Optional[date] = None  # 空值表示已读；非空则在此日重新显示
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ReviewAudit(SQLModel, table=True):
+    """独立保存的 AI 审阅及输入快照，不修改人工验证。"""
+    __tablename__ = "review_audit"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    observation_id: int = Field(foreign_key="review_observation.id", index=True)
+    review_date: date = Field(index=True)
+    context_hash: str = Field(index=True)
+    model: str
+    prompt_version: int = 1
+    context_json: str
+    result_json: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Holding(SQLModel, table=True):
     """手动录入的持仓（无台账记录的股票；有台账的以 FIFO 计算为准）"""
 

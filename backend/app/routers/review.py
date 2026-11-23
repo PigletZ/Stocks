@@ -2,7 +2,7 @@ from datetime import datetime, date, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Literal
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
@@ -12,7 +12,9 @@ from ..database import get_session
 from ..validation import parse_iso_date
 from ..services.review_service import ReviewService
 from ..services.review_workbench import ReviewWorkbench, today_shanghai
-from ..models import ReviewObservation, ReviewVerification, Stock
+from ..models import ReviewCondition, ReviewObservation, ReviewReminderState, ReviewVerification, Stock
+from ..services.review_assistant import ConditionInput, ReviewAssistant, condition_view, save_condition
+from ..services.review_ai import AuditBusy, AuditUnavailable, generate_audit
 
 router = APIRouter()
 
@@ -70,6 +72,87 @@ def verify_observation(observation_id: int, body: VerificationIn,
         row = ReviewVerification(observation_id=observation_id, review_date=target, verdict=body.verdict)
     row.verdict, row.explanation, row.updated_at = body.verdict, body.explanation.strip(), datetime.utcnow()
     session.add(row)
+    session.commit()
+    return {"saved": True}
+
+
+def _review_date(session, target):
+    result = target or ReviewWorkbench.dates(session)[0]
+    if result > today_shanghai():
+        raise HTTPException(400, "不能审阅未来日期")
+    return result
+
+
+def _observation(session, observation_id):
+    record = session.get(ReviewObservation, observation_id)
+    if record is None:
+        raise HTTPException(404, "关注记录不存在")
+    return record
+
+
+@router.get("/assistant")
+def review_assistant(target: Optional[date] = Query(None, alias="date"), session: Session = Depends(get_session)):
+    return ReviewAssistant().dashboard(session, _review_date(session, target))
+
+
+@router.post("/observations/{observation_id}/conditions")
+def confirm_condition(observation_id: int, body: ConditionInput, session: Session = Depends(get_session)):
+    try:
+        return save_condition(session, _observation(session, observation_id), body)
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from None
+
+
+@router.get("/observations/{observation_id}/conditions")
+def condition_history(observation_id: int, target: date = Query(..., alias="date"), session: Session = Depends(get_session)):
+    observation = _observation(session, observation_id)
+    if _review_date(session, target) < observation.observation_date:
+        raise HTTPException(400, "规则日期不能早于关注日期")
+    rows = session.exec(select(ReviewCondition).where(ReviewCondition.observation_id == observation_id,
+        ReviewCondition.effective_date <= target).order_by(ReviewCondition.effective_date.desc(), ReviewCondition.id.desc()).limit(100)).all()
+    return [condition_view(row) for row in rows]
+
+
+class AuditIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    date: date
+    force: bool = False
+
+
+@router.post("/observations/{observation_id}/audit")
+def audit_observation(observation_id: int, body: AuditIn, session: Session = Depends(get_session)):
+    observation = _observation(session, observation_id)
+    try:
+        return generate_audit(session, observation, _review_date(session, body.date), ReviewAssistant(), body.force)
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from None
+    except AuditBusy as error:
+        raise HTTPException(409, str(error)) from None
+    except AuditUnavailable as error:
+        raise HTTPException(503, str(error)) from None
+
+
+class ReminderIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    date: date
+    action: Literal["read", "snooze", "reset"]
+    snooze_until: Optional[date] = None
+
+
+@router.put("/reminders/{reminder_key}")
+def update_reminder(reminder_key: str, body: ReminderIn, session: Session = Depends(get_session)):
+    target = _review_date(session, body.date)
+    reminders = ReviewAssistant().dashboard(session, target)["reminders"]
+    if not any(item["key"] == reminder_key for item in reminders):
+        raise HTTPException(404, "提醒已变化，请刷新后查看")
+    until = None
+    if body.action == "snooze":
+        if body.snooze_until is None or not target < body.snooze_until <= target + timedelta(days=30):
+            raise HTTPException(400, "暂缓日期须在所选日期之后的 30 天内")
+        until = body.snooze_until
+    elif body.action == "reset":
+        until = target
+    session.add(ReviewReminderState(reminder_key=reminder_key, effective_date=target, snooze_until=until))
     session.commit()
     return {"saved": True}
 
