@@ -56,7 +56,7 @@ const auditHistoryLoader=createLatestLoader<ReviewAuditHistory>({resolve:value=>
 const snapshotLoader=createLatestLoader<ReviewAudit>({resolve:value=>selectedAudit.value=value,reject:()=>error.value='历史意见读取失败，请重试。',pending:value=>snapshotLoading.value=value})
 function loadAuditHistory(page=1){error.value='';return auditHistoryLoader.load(signal=>fetchReviewAuditHistory(props.observation.id,props.date,page,signal))}
 function toggleAuditHistory(){auditHistoryOpen.value=!auditHistoryOpen.value;if(auditHistoryOpen.value)loadAuditHistory()}
-function viewSavedAudit(id:number){error.value='';return snapshotLoader.load(signal=>fetchSavedReviewAudit(props.observation.id,id,props.date,signal))}
+function viewSavedAudit(id:number){if(working.value)return;error.value='';return snapshotLoader.load(signal=>fetchSavedReviewAudit(props.observation.id,id,props.date,signal))}
 function time(value:string){return new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(value))}
 function openRule(){const old=props.entry?.rule;form.kind=old?.kind||'hold_change';form.operator=old?.operator||'ge';form.threshold_pct=old?.threshold_pct||'0';form.note=old?'':props.observation.criterion.slice(0,500);confirmed.value=false;ruleOpen.value=true;error.value=''}
 async function toggleHistory(){historyOpen.value=!historyOpen.value;if(historyOpen.value)await historyLoader.load(signal=>fetchReviewConditions(props.observation.id,props.date,signal))}
@@ -69,7 +69,7 @@ async function saveRule(){
 }
 async function runAudit(force:boolean){
   if(working.value||!props.entry||!props.ai?.configured)return
-  const current=generation;request?.abort();request=new AbortController();working.value='ai';notice.value='';error.value=''
+  const current=generation;request?.abort();snapshotLoader.cancel();selectedAudit.value=null;request=new AbortController();working.value='ai';notice.value='';error.value=''
   try{const result=await auditReviewObservation(props.observation.id,props.date,force,request.signal);if(disposed||generation!==current)return;selectedAudit.value=null;localAudit.value=result;notice.value=result.cached?'证据未变化，已复用保存的审阅结果。':'AI 审阅已保存，人工验证结论未被修改。';emit('changed')}
   catch(e:any){if(!disposed&&generation===current)error.value=e?.response?.data?.detail||'审阅结果尚未确认，请刷新查看是否已保存；避免立即重复提交。'}
   finally{if(current===generation)working.value=''}
