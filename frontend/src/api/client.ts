@@ -886,10 +886,11 @@ export interface ReviewWorkbenchData {
   observations: ReviewObservation[]
 }
 export async function fetchReviewWorkbench(date?: string, signal?: AbortSignal): Promise<ReviewWorkbenchData> {
-  const { data } = await api.get('/review/workbench', { params: { date }, signal })
+  const { data } = await api.get('/review/workbench', { params: { date, include_observations: false }, signal })
   return data
 }
-export async function createReviewObservation(body: { code: string; observation_date: string; reason: string; criterion: string; deadline: string }) {
+export interface ReviewConditionSpec { kind: 'end_change' | 'hold_change'; operator: 'ge' | 'le'; threshold_pct: string; note: string }
+export async function createReviewObservation(body: { code: string; observation_date: string; reason: string; criterion: string; deadline: string; condition?: ReviewConditionSpec }): Promise<{id:number}> {
   const { data } = await api.post('/review/observations', body)
   return data
 }
@@ -911,6 +912,7 @@ export interface ReviewFact { id: string; label: string; value: unknown }
 export interface ReviewAuditItem { text: string; evidence_ids: string[] }
 export interface ReviewAudit {
   id: number; date: string; created_at: string; model: string; stale: boolean; cached?: boolean
+  historical: boolean; changes: string[]
   result: { supporting_evidence: ReviewAuditItem[]; counter_evidence: ReviewAuditItem[]; uncertainties: ReviewAuditItem[]; next_checks: ReviewAuditItem[] }
   facts: ReviewFact[]
 }
@@ -919,14 +921,48 @@ export interface ReviewAssistantEntry {
 }
 export interface ReviewReminder {
   key: string; kind: string; level: 'warning' | 'attention' | 'info'; title: string; message: string
-  observation_id: number; code: string; deadline: string; hidden: boolean; snooze_until: string | null
+  observation_id: number; code: string; name: string; deadline: string; hidden: boolean; snooze_until: string | null
 }
 export interface ReviewAssistantData {
   date: string; ai: { configured: boolean; model: string | null; message: string }; entries: ReviewAssistantEntry[]
-  reminders: ReviewReminder[]; active_count: number; scope_count: number
+  reminders: ReviewReminder[]; active_count: number; scope_count: number; pending_count: number
+  page: number; page_size: number; pages: number; total: number
 }
-export async function fetchReviewAssistant(date: string, signal?: AbortSignal): Promise<ReviewAssistantData> {
-  const { data } = await api.get('/review/assistant', { params: { date }, signal })
+export async function fetchReviewAssistant(date: string, signal?: AbortSignal, options?: {page:number;include_hidden:boolean}): Promise<ReviewAssistantData> {
+  const { data } = await api.get('/review/assistant', { params: { date, include_entries: false, ...options }, signal })
+  return data
+}
+export type ReviewAuditSummary = Pick<ReviewAudit,'id'|'date'|'created_at'|'model'|'stale'|'historical'|'changes'>
+export interface ReviewObservationSummary extends ReviewObservation {
+  evaluation: ReviewEvaluation; rule_description: string | null; last_audit: ReviewAuditSummary | null
+}
+export interface ReviewObservationPage {
+  date: string; items: ReviewObservationSummary[]; total: number; page: number; page_size: number; pages: number
+}
+export interface ReviewObservationDetail {
+  observation: ReviewObservation; entry: ReviewAssistantEntry; ai: ReviewAssistantData['ai']
+}
+export interface ReviewAuditHistory {
+  items: Pick<ReviewAudit,'id'|'date'|'created_at'|'model'>[]; total: number; page: number; page_size: number; pages: number
+}
+export async function fetchReviewObservations(date: string, status: string, search: string, page: number, signal?: AbortSignal): Promise<ReviewObservationPage> {
+  const { data } = await api.get('/review/observations', { params: { date, status, search, page, page_size: 20 }, signal })
+  return data
+}
+export async function fetchReviewObservation(id: number, date: string, signal?: AbortSignal): Promise<ReviewObservationDetail> {
+  const { data } = await api.get(`/review/observations/${id}`, { params: { date }, signal })
+  return data
+}
+export async function fetchReviewAuditHistory(id: number, date: string, page: number, signal?: AbortSignal): Promise<ReviewAuditHistory> {
+  const { data } = await api.get(`/review/observations/${id}/audits`, { params: { date, page }, signal })
+  return data
+}
+export async function fetchSavedReviewAudit(id: number, auditId: number, date: string, signal?: AbortSignal): Promise<ReviewAudit> {
+  const { data } = await api.get(`/review/observations/${id}/audits/${auditId}`, { params: { date }, signal })
+  return data
+}
+export async function fetchReviewDeadlines(date: string, signal?: AbortSignal): Promise<{date:string;options:{days:number;date:string}[]}> {
+  const { data } = await api.get('/review/deadlines', { params: { date }, signal })
   return data
 }
 export async function confirmReviewCondition(id: number, body: { effective_date: string; kind: string; operator: string; threshold_pct: string; note: string }): Promise<ReviewCondition> {

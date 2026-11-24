@@ -70,7 +70,7 @@ class ReviewWorkbench:
                           "unknown": sum(r['status'] == '未知' for r in items)},
                 "items": sorted(items, key=lambda r: (-r['prev_boards'], r['today_pct'] is None, -(r['today_pct'] or 0), r['code']))}
 
-    def get(self, session, target=None):
+    def get(self, session, target=None, include_observations=True):
         d, current, previous = self.dates(session, target)
         performance = self.performance(session, d, current, previous)
         rows = session.exec(select(LimitUpDaily).where(LimitUpDaily.trade_date == d, LimitUpDaily.limit_type == 'U')).all()
@@ -84,23 +84,25 @@ class ReviewWorkbench:
                               "highest": max(counts, default=0) if ready else None},
                 "available_dates": [v.isoformat() for v in session.exec(select(MarketDailyStat.stat_date).where(
                     MarketDailyStat.stat_date <= today_shanghai()).order_by(MarketDailyStat.stat_date)).all()],
-                "observations": self.observations(session, d)}
+                "observations": self.observations(session, d) if include_observations else []}
 
     @staticmethod
-    def observations(session, d):
-        observations = session.exec(select(ReviewObservation).where(ReviewObservation.observation_date <= d)
+    def observations(session, d, records=None):
+        observations = records if records is not None else session.exec(select(ReviewObservation).where(ReviewObservation.observation_date <= d)
             .order_by(ReviewObservation.observation_date.desc(), ReviewObservation.id.desc()).limit(500)).all()
+        from .review_records import chunks, latest_records
         codes = {r.stock_code for r in observations}
-        names = {r.code: r.name for r in session.exec(select(Stock).where(Stock.code.in_(codes))).all()} if codes else {}
+        names = {}
+        for batch in chunks(list(codes)):
+            names.update({r.code: r.name for r in session.exec(select(Stock).where(Stock.code.in_(batch))).all()})
         ids = [r.id for r in observations]
-        verifications = session.exec(select(ReviewVerification).where(
-            ReviewVerification.observation_id.in_(ids), ReviewVerification.review_date <= d)
-            .order_by(ReviewVerification.review_date, ReviewVerification.id)).all() if ids else []
-        latest = {r.observation_id: r for r in verifications}
-        dates = {r.observation_date for r in observations} | {d}
-        quotes = session.exec(select(StockDailyQuote).where(StockDailyQuote.stock_code.in_(codes),
-            StockDailyQuote.trade_date.in_(dates))).all() if codes else []
-        prices = {(r.stock_code, r.trade_date): r.close for r in quotes}
+        latest = latest_records(session, ReviewVerification, ids, ReviewVerification.review_date, d)
+        prices = {}
+        for batch in chunks(observations):
+            dates = {r.observation_date for r in batch} | {d}
+            quotes = session.exec(select(StockDailyQuote.stock_code, StockDailyQuote.trade_date, StockDailyQuote.close).where(
+                StockDailyQuote.stock_code.in_({r.stock_code for r in batch}), StockDailyQuote.trade_date.in_(dates))).all()
+            prices.update({(code, day): close for code, day, close in quotes})
         result = []
         for r in observations:
             base, current = prices.get((r.stock_code, r.observation_date)), prices.get((r.stock_code, d))

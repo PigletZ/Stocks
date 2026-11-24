@@ -113,7 +113,7 @@ def generate_audit(session, observation, as_of, assistant, force=False):
         latest = session.exec(select(ReviewAudit).where(ReviewAudit.observation_id == observation.id,
             ReviewAudit.review_date == as_of).order_by(ReviewAudit.id.desc())).first()
         if latest and not force and latest.context_hash == current["context_hash"] and latest.model == settings.ai_model and latest.prompt_version == PROMPT_VERSION:
-            return {**audit_view(latest, current["context_hash"]), "cached": True}
+            return {**audit_view(latest, current["context_hash"], current["context"]), "cached": True}
         if latest and datetime.utcnow() - latest.created_at < timedelta(seconds=120):
             raise AuditBusy("刚生成过审阅，请等待两分钟后再生成；已有意见可继续查看")
         result = request_audit(current["context"])
@@ -127,6 +127,6 @@ def generate_audit(session, observation, as_of, assistant, force=False):
         # 请求期间发生的规则、验证或行情变更应立即提示结果已过期。
         session.expire_all()
         refreshed = assistant.context(session, observation, as_of)
-        return {**audit_view(record, refreshed["context_hash"]), "cached": False}
+        return {**audit_view(record, refreshed["context_hash"], refreshed["context"]), "cached": False}
     finally:
         _audit_lock.release()

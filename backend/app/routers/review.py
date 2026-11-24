@@ -12,16 +12,18 @@ from ..database import get_session
 from ..validation import parse_iso_date
 from ..services.review_service import ReviewService
 from ..services.review_workbench import ReviewWorkbench, today_shanghai
-from ..models import ReviewCondition, ReviewObservation, ReviewReminderState, ReviewVerification, Stock
-from ..services.review_assistant import ConditionInput, ReviewAssistant, condition_view, save_condition
+from ..models import ReviewAudit, ReviewCondition, ReviewObservation, ReviewReminderState, ReviewVerification, Stock
+from ..services.review_assistant import ConditionInput, ConditionSpec, ReviewAssistant, audit_view, condition_view, save_condition
 from ..services.review_ai import AuditBusy, AuditUnavailable, generate_audit
+from ..services import review_tracking
+from ..services.etf_service import EtfService
 
 router = APIRouter()
 
 
 @router.get("/workbench")
-def workbench(target: Optional[date] = Query(None, alias="date"), session: Session = Depends(get_session)):
-    return ReviewWorkbench().get(session, target)
+def workbench(target: Optional[date] = Query(None, alias="date"), session: Session = Depends(get_session), include_observations: bool = True):
+    return ReviewWorkbench().get(session, target, include_observations)
 
 
 class ObservationIn(BaseModel):
@@ -30,6 +32,7 @@ class ObservationIn(BaseModel):
     reason: str = Field(min_length=1, max_length=2000)
     criterion: str = Field(min_length=1, max_length=2000)
     deadline: date
+    condition: Optional[ConditionSpec] = None
 
 
 @router.post("/observations")
@@ -44,10 +47,16 @@ def create_observation(body: ObservationIn, session: Session = Depends(get_sessi
         reason=body.reason.strip(), criterion=body.criterion.strip(), deadline=body.deadline)
     session.add(record)
     try:
+        session.flush()
+        if body.condition:
+            save_condition(session, record, ConditionInput(**body.condition.model_dump(), effective_date=body.observation_date), commit=False)
         session.commit()
     except IntegrityError:
         session.rollback()
         raise HTTPException(409, "该股票在这一天已有关注记录，请直接补充验证结果")
+    except ValueError as error:
+        session.rollback()
+        raise HTTPException(400, str(error)) from None
     return {"id": record.id}
 
 
@@ -91,8 +100,57 @@ def _observation(session, observation_id):
 
 
 @router.get("/assistant")
-def review_assistant(target: Optional[date] = Query(None, alias="date"), session: Session = Depends(get_session)):
-    return ReviewAssistant().dashboard(session, _review_date(session, target))
+def review_assistant(target: Optional[date] = Query(None, alias="date"), session: Session = Depends(get_session),
+                     page: int = Query(1, ge=1), page_size: int = Query(10, ge=1, le=50),
+                     include_hidden: bool = False, include_entries: bool = False):
+    return ReviewAssistant().dashboard(session, _review_date(session, target), include_entries, page, page_size, include_hidden)
+
+
+@router.get("/deadlines")
+def get_deadlines(target: date = Query(..., alias="date")):
+    if target > today_shanghai():
+        raise HTTPException(400, "关注日期不能晚于今天")
+    try:
+        return review_tracking.trading_deadlines(target, EtfService()._fetch_trade_dates)
+    except RuntimeError:
+        raise HTTPException(503, "暂未取得完整官方日历，可稍后重试或手动选择日期") from None
+
+
+@router.get("/observations")
+def observation_list(target: date = Query(..., alias="date"),
+                     status: Literal["pending", "due", "completed", "all"] = "pending",
+                     search: str = Query("", max_length=100), page: int = Query(1, ge=1),
+                     page_size: int = Query(20, ge=1, le=50), session: Session = Depends(get_session)):
+    return review_tracking.list_observations(session, _review_date(session, target), status, search, page, page_size)
+
+
+@router.get("/observations/{observation_id}")
+def get_observation(observation_id: int, target: date = Query(..., alias="date"), session: Session = Depends(get_session)):
+    observation = _observation(session, observation_id)
+    try:
+        return review_tracking.observation_detail(session, observation, _review_date(session, target))
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from None
+
+
+@router.get("/observations/{observation_id}/audits")
+def get_audit_history(observation_id: int, target: date = Query(..., alias="date"),
+                      page: int = Query(1, ge=1), page_size: int = Query(5, ge=1, le=20), session: Session = Depends(get_session)):
+    observation = _observation(session, observation_id)
+    if _review_date(session, target) < observation.observation_date:
+        raise HTTPException(400, "审阅日期不能早于关注日期")
+    return review_tracking.audit_history(session, observation, target, page, page_size)
+
+
+@router.get("/observations/{observation_id}/audits/{audit_id}")
+def get_saved_audit(observation_id: int, audit_id: int, target: date = Query(..., alias="date"), session: Session = Depends(get_session)):
+    observation = _observation(session, observation_id)
+    target = _review_date(session, target)
+    record = session.get(ReviewAudit, audit_id)
+    if record is None or record.observation_id != observation.id or record.review_date > target:
+        raise HTTPException(404, "截至所选日期没有这份审阅记录")
+    current = ReviewAssistant().context(session, observation, target)
+    return audit_view(record, current["context_hash"], current["context"])
 
 
 @router.post("/observations/{observation_id}/conditions")
@@ -142,7 +200,7 @@ class ReminderIn(BaseModel):
 @router.put("/reminders/{reminder_key}")
 def update_reminder(reminder_key: str, body: ReminderIn, session: Session = Depends(get_session)):
     target = _review_date(session, body.date)
-    reminders = ReviewAssistant().dashboard(session, target)["reminders"]
+    reminders = ReviewAssistant().dashboard(session, target, include_entries=False)["reminders"]
     if not any(item["key"] == reminder_key for item in reminders):
         raise HTTPException(404, "提醒已变化，请刷新后查看")
     until = None
