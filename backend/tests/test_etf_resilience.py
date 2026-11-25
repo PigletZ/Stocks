@@ -166,7 +166,12 @@ class EtfCacheTests(unittest.TestCase):
                                   "close": 1 + (day-date(2026, 1, 1)).days / 1000,
                                   "pct_chg": 1, "amount": 20000}])
         self.pro.fund_daily.side_effect = daily
+        def factors(api_name, **params):
+            self.assertEqual(api_name, 'fund_adj')
+            return pd.DataFrame([{'ts_code':'510001.SH','trade_date':params['trade_date'],'adj_factor':1}])
+        self.pro.query.side_effect = factors
         result = build_dashboard(self.service, date(2026, 11, 16))
+        self.assertTrue(all(result['items'][0][f'gain_{window}'] is not None for window in (2,5,10,20)))
         self.age_cache()
         return result
 
@@ -181,7 +186,8 @@ class EtfCacheTests(unittest.TestCase):
         self.assertEqual(actual["items"], expected["items"])
         self.assertEqual(actual["base_dates"], expected["base_dates"])
         self.assertEqual(actual["missing_windows"], [])
-        self.assertEqual(len(actual["cache_fallbacks"]), 7)
+        self.assertEqual(len(actual["cache_fallbacks"]), 12)
+        self.assertEqual(sum('复权因子' in item['resource'] for item in actual['cache_fallbacks']), 5)
 
     def test_missing_uncached_baseline_is_null_instead_of_invented(self):
         original = self.seed_dashboard()
@@ -198,6 +204,17 @@ class EtfCacheTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.service._fetch_etf_daily_for_date(date(2026, 11, 16))
         self.assertIsNone(self.service._frame_cache.get("daily-20261116"))
+
+    def test_uncached_factor_does_not_fall_back_to_raw_gain(self):
+        original=self.seed_dashboard()
+        baseline=original['base_dates']['20'].replace('-','')
+        (Path(self.directory.name)/f'factor-{baseline}.json').unlink()
+        with patch('app.services.tushare_client.requests.post',return_value=Mock(status_code=502)):
+            result=build_dashboard(self.offline_service(),date(2026,11,17))
+        self.assertEqual(result['missing_windows'],[])
+        self.assertIsNone(result['items'][0]['gain_20'])
+        self.assertIsNotNone(result['items'][0]['raw_gain_20'])
+        self.assertIsNotNone(result['items'][0]['gain_5'])
 
     def test_corrupted_disk_cache_can_be_repaired_by_live_data(self):
         path = Path(self.directory.name) / "calendar-2026.json"
