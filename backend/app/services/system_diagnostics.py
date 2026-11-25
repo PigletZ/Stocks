@@ -49,6 +49,8 @@ class SystemDiagnostics:
                 ("stocks", "股票日线", "daily", {**params, "ts_code": "600519.SH", "fields": "ts_code,trade_date,close"}, "trade_date"),
                 ("indices", "指数日线", "index_daily", {**params, "ts_code": "000001.SH", "fields": "ts_code,trade_date,close"}, "trade_date"),
                 ("etf", "ETF 日线", "fund_daily", {**params, "ts_code": "510300.SH", "fields": "ts_code,trade_date,close"}, "trade_date"),
+                ('stock_factors', '股票复权因子', 'adj_factor', {**params, 'ts_code': '600519.SH', 'fields': 'ts_code,trade_date,adj_factor'}, 'trade_date'),
+                ('fund_factors', 'ETF 复权因子', 'fund_adj', {**params, 'ts_code': '510300.SH', 'fields': 'ts_code,trade_date,adj_factor'}, 'trade_date'),
                 ("income", "利润表", "income", {"ts_code": "600519.SH", "limit": 1, "fields": "ts_code,end_date"}, "end_date"),
                 ("balance", "资产负债表", "balancesheet", {"ts_code": "600519.SH", "limit": 1, "fields": "ts_code,end_date"}, "end_date"),
                 ("cashflow", "现金流量表", "cashflow", {"ts_code": "600519.SH", "limit": 1, "fields": "ts_code,end_date"}, "end_date"),
@@ -84,6 +86,9 @@ class SystemDiagnostics:
                                 close = float(sample.get("close"))
                                 if not math.isfinite(close) or close <= 0:
                                     raise ValueError("invalid sample price")
+                            if key in {'stock_factors', 'fund_factors'}:
+                                from .price_basis import normalize_factors
+                                normalize_factors(frame, code=arguments['ts_code'].split('.')[0], start=start, end=today)
                             result.update(status="ok", message="接口采样成功；不代表全市场数据已同步齐全", sample_date=str(frame.iloc[0][date_field]))
                         else:
                             result.update(status="unknown", kind="empty", message="接口可达但未返回样本，数据可用性待核验")

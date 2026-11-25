@@ -9,11 +9,13 @@ from sqlmodel import select
 
 from ..config import settings
 from ..models import (Bar, DragonTigerDaily, FinHighlight, IndexDaily, LimitUpDaily,
-                      MarketDailyStat, SectorDaily, Stock, StockDailyQuote)
+                      MarketDailyStat, SectorDaily, Stock, StockDailyQuote, StockAdjustmentFactor)
 from .etf_service import EtfService
 from .runtime_state import BACKEND_DIR, RuntimeStore, SystemPreferences, get_preferences, utc_now
 from .system_diagnostics import SystemDiagnostics
 from .system_jobs import job_statuses
+from .system_maintenance import maintenance_statuses
+from .system_price_coverage import price_coverage
 
 SHANGHAI = timezone(timedelta(hours=8))
 STARTED_AT = utc_now()
@@ -22,6 +24,7 @@ TABLES = [
     ("主要指数", IndexDaily, "trade_date", "概览指数走势"),
     ("板块行情", SectorDaily, "trade_date", "方向强弱、板块排行"),
     ("个股行情快照", StockDailyQuote, "trade_date", "个股表现、复盘验证"),
+    ("股票复权因子", StockAdjustmentFactor, "trade_date", "区间涨幅榜、复盘价格条件"),
     ("涨跌停明细", LimitUpDaily, "trade_date", "复盘梯队、涨跌停结构"),
     ("龙虎榜", DragonTigerDaily, "trade_date", "龙虎榜复盘"),
     ("财务亮点榜", FinHighlight, "stat_date", "财务亮点；日期仅代表榜单计算日"),
@@ -49,6 +52,8 @@ class SystemService:
         calendar = self.etf.cached_trade_dates(local_day-timedelta(days=60), local_day)
         expected = expected_trade_date(calendar[0], self.now, preferences.data_ready_hour) if calendar else None
         tables = self._table_freshness(session, expected)
+        comparisons = price_coverage(session, self.etf, expected, local_day)
+        maintenance = maintenance_statuses(self.store, self.now)
         jobs = job_statuses(self.now, self.log_dir, self.store, self.discovered)
         diagnostics = SystemDiagnostics(self.store).get_report(self.now)
         database, backup = self._db_info(session), self._backup_info()
@@ -61,6 +66,14 @@ class SystemService:
         for job in jobs:
             if job["status"] not in {"success", "running", "skipped"}:
                 alerts.append(self._alert(f"job-{job['key']}", "error" if job["status"] in {"error", "interrupted"} else "warning", f"{job['name']}：执行结果待处理", job["message"], "展开任务查看执行记录与日志摘要"))
+        for comparison in comparisons:
+            if comparison['status'] in ('partial', 'stale'):
+                alerts.append(self._alert('price-'+comparison['key'], 'warning', comparison['label']+'需要核对',
+                    comparison['message'], '在“数据与任务”查看各窗口覆盖；缺因子可回填复权数据，缺报价需检查行情同步'))
+        for item in maintenance:
+            if item['action'] != 'daily' and item['status'] in ('error', 'interrupted', 'partial', 'unknown'):
+                alerts.append(self._alert('maintenance-'+item['action'], 'warning', item['name']+'结果待核验',
+                    item['message'], '查看维护任务的失败或待发布明细，确认后可重新发起'))
         if diagnostics["status"] != "ok":
             checks = [check for check in diagnostics["checks"] if check.get("status") == "error"]
             detail = "；".join(f"{check['label']}：{check['message']}" for check in checks[:2]) if diagnostics["fresh"] else "尚无最近 10 分钟内的有效诊断结果"
@@ -84,6 +97,7 @@ class SystemService:
                 "calendar": {"status": "cached" if calendar else "unknown", "fetched_at": calendar[1].isoformat() if calendar else None,
                              "ready_hour": preferences.data_ready_hour, "today_open": local_day in calendar[0] if calendar else None},
                 "alerts": alerts, "database": database, "tables": tables, "cron_jobs": jobs,
+                'price_coverage': comparisons,
                 "diagnostics": diagnostics, "cache": self._cache_info(), "backup": backup,
                 "configuration": config, "preferences": preferences.model_dump(),
                 "runtime": {"started_at": STARTED_AT.isoformat(), "version": self._version(), "status": "ok"}}
@@ -154,6 +168,17 @@ class SystemService:
                 valid = session.exec(select(func.count()).select_from(model).where(*filters, model.close > 0)).one()
                 if reference:
                     item.update(reference_rows=reference, coverage_pct=round(min(valid/reference, 1)*100, 1), coverage_note="相对本地股票池；停牌等会影响覆盖，低于 95% 提示核验")
+            elif model is StockAdjustmentFactor:
+                from .price_basis import positive_decimal
+                pairs = session.exec(select(StockDailyQuote.stock_code, StockAdjustmentFactor.factor)
+                    .outerjoin(StockAdjustmentFactor, (StockAdjustmentFactor.stock_code == StockDailyQuote.stock_code)
+                               & (StockAdjustmentFactor.trade_date == StockDailyQuote.trade_date))
+                    .where(StockDailyQuote.trade_date == check_day, StockDailyQuote.close > 0)).all()
+                reference = len(pairs)
+                if reference:
+                    valid = sum(positive_decimal(factor) is not None for code, factor in pairs)
+                    item.update(reference_rows=reference, coverage_pct=round(valid/reference*100, 2),
+                                coverage_note='分母为同日有效个股报价，分子为其中有有效同日因子的股票；区间配对见下方复权覆盖')
             elif model is SectorDaily:
                 previous = session.exec(select(func.max(column)).where(column < check_day)).first()
                 if previous:
@@ -173,7 +198,7 @@ class SystemService:
                 quality_issue = None
                 if model is MarketDailyStat and (not stat or stat.total <= 0 or stat.up+stat.down+stat.flat != stat.total or stat.total_turnover <= 0):
                     quality_issue = "涨跌家数、样本数或成交额不完整"
-                threshold = 85 if model is SectorDaily else 100 if model in (IndexDaily, LimitUpDaily) else 95
+                threshold = 85 if model is SectorDaily else 100 if model in (IndexDaily, LimitUpDaily, StockAdjustmentFactor) else 95
                 if item["coverage_pct"] is not None and item["coverage_pct"] < threshold:
                     quality_issue = f"该日覆盖约 {item['coverage_pct']}%，低于核验门槛"
                 if model is SectorDaily:
@@ -192,12 +217,16 @@ class SystemService:
         try:
             files = list(directory.glob("*.json"))
             daily = sorted(path for path in files if path.name.startswith("daily-"))
+            factors = sorted(path for path in files if path.name.startswith('factor-'))
             newest = daily[-1] if daily else None
             day = datetime.strptime(newest.stem[6:], "%Y%m%d").date().isoformat() if newest else None
             return {"status": "cached" if daily else "empty", "snapshots": len(daily), "latest_date": day, "size_bytes": sum(path.stat().st_size for path in files),
+                    'factor_snapshots': len(factors),
+                    'latest_factor_date': datetime.strptime(factors[-1].stem[7:], '%Y%m%d').date().isoformat() if factors else None,
                     "basic_available": (directory / "basic.json").exists(), "note": "文件数量不代表所有涨幅窗口都有可用基准；实际回退以 ETF 页面校验结果为准"}
         except (OSError, ValueError):
-            return {"status": "unknown", "snapshots": 0, "latest_date": None, "size_bytes": 0, "basic_available": False, "note": "缓存目录无法完整读取"}
+            return {"status": "unknown", "snapshots": 0, "latest_date": None, "factor_snapshots": 0, 'latest_factor_date': None,
+                    "size_bytes": 0, "basic_available": False, "note": "缓存目录无法完整读取"}
 
     def _backup_info(self):
         manifest = self.store.read("backup")

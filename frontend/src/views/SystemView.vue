@@ -24,7 +24,7 @@
           <div v-else class="alerts"><article v-for="alert in shownAlerts" :key="alert.key" class="alert-item" :class="alert.severity"><span class="alert-mark">{{ alert.severity === 'error' ? '!' : '·' }}</span><div><h3>{{ alert.title }}</h3><p>{{ alert.detail }}</p><small>{{ alert.action }}</small></div></article></div>
           <button v-if="status.alerts.length > 6" class="text-button show-more" @click="showAllAlerts=!showAllAlerts">{{ showAllAlerts ? '收起' : `查看其余 ${status.alerts.length-6} 项` }}</button>
         </section>
-        <section class="panel"><div class="section-heading"><div><h2>Tushare 数据源诊断</h2><p>手动检查 7 个接口；普通刷新不调用数据源。采样成功不代表全市场已同步齐全。</p></div><span class="badge" :class="tone(status.diagnostics.status)">{{ status.diagnostics.fresh ? '最近 10 分钟内结果' : '待重新检查' }}</span></div>
+        <section class="panel"><div class="section-heading"><div><h2>Tushare 数据源诊断</h2><p>手动检查 9 个接口，包含股票和 ETF 复权因子；普通刷新不调用数据源。采样成功不代表全市场已同步齐全。</p></div><span class="badge" :class="tone(status.diagnostics.status)">{{ status.diagnostics.fresh ? '最近 10 分钟内结果' : '待重新检查' }}</span></div>
           <p v-if="checking" class="hint">正在分别检查日历、股票、指数、ETF 和三张财报，最长约一分钟；已有数据继续保留。</p>
           <div v-if="status.diagnostics.checks.length" class="diagnostic-grid"><article v-for="check in status.diagnostics.checks" :key="check.key"><div class="row"><h3>{{ check.label }}</h3><span class="badge" :class="status.diagnostics.fresh ? tone(check.status) : 'muted'">{{ status.diagnostics.fresh ? statusText(check.status) : `上次${statusText(check.status)}` }}</span></div><p>{{ check.message }}</p><small>{{ check.sample_date ? `样本日期 ${sampleDate(check.sample_date)} · ` : '' }}{{ check.duration_ms }} ms</small><details><summary>接口详情</summary><code>{{ check.api }}</code><small v-if="check.kind"> · {{ errorKind(check.kind) }}</small></details></article></div>
           <div v-else class="empty">尚未检查数据源。点击右上角“检查数据源”开始诊断。</div>
@@ -32,6 +32,8 @@
       </div>
 
       <div v-if="tab === 'data'" class="section-stack">
+        <SystemMaintenance @completed="load" />
+        <SystemPriceCoverage :items="status.price_coverage" />
         <section class="panel"><div class="section-heading"><div><h2>数据完整度</h2><p>依据官方交易日历，{{ status.calendar.ready_hour }}:00 后按当天收盘数据核验，此前按上一交易日核验。这是本软件的检查规则。</p></div><span class="badge" :class="tone(status.calendar.status)">{{ status.calendar.status === 'cached' ? '使用已验证日历' : '日历待确认' }}</span></div>
           <p class="hint">核验日期 {{ status.summary.expected_date || '尚不能确定，不使用工作日推算' }} · 日历缓存于 {{ formatTime(status.calendar.fetched_at) }}。财务榜日期仅表示榜单计算日，财报校验结果见任务记录。</p>
           <div class="table-wrap"><table><thead><tr><th>状态 / 数据</th><th>最新记录</th><th>核验日期</th><th>该日记录 / 参考数</th><th>核验说明</th></tr></thead><tbody><tr v-for="item in status.tables" :key="item.table"><td><span class="badge" :class="tone(item.status)">{{ statusText(item.status) }}</span><b>{{ item.label }}</b><small>{{ item.impact }}</small></td><td>{{ item.max_date || '—' }}</td><td>{{ item.checked_date || '—' }}<small v-if="!item.expected_date">时效待确认</small></td><td>{{ item.rows.toLocaleString() }}<span v-if="item.reference_rows !== null"> / {{ item.reference_rows.toLocaleString() }}</span><small v-if="item.coverage_pct !== null">参考覆盖 {{ item.coverage_pct }}%</small></td><td class="explanation">{{ item.message }}<details v-if="item.coverage_note"><summary>覆盖口径</summary><small>{{ item.coverage_note }}</small></details></td></tr></tbody></table></div>
@@ -45,6 +47,7 @@
       </div>
 
       <div v-if="tab === 'settings'" class="section-stack">
+        <SystemMaintenance @completed="load" />
         <section class="panel"><div class="section-heading"><div><h2>配置状态</h2><p>{{ status.configuration.note }}</p></div><small>版本 {{ status.runtime.version || '未知' }} · 服务启动 {{ formatTime(status.runtime.started_at) }}</small></div><div class="configuration-grid"><div><span>Tushare 凭据</span><strong>{{ status.configuration.tushare_configured ? '已配置，权限见诊断' : '未配置' }}</strong></div><div><span>登录验证</span><strong>{{ status.configuration.authentication_configured ? '已配置' : '未配置' }}</strong></div><div><span>公网访问白名单</span><strong>{{ status.configuration.public_host_configured ? '已配置' : '使用本地开发默认值' }}</strong></div></div></section>
         <section class="panel"><div class="section-heading"><div><h2>常用配置</h2><p>保存后对后续数据请求、缓存清理和状态判断生效。已有缓存不会因接口失败而被空数据覆盖。</p></div><small>最近保存 {{ formatTime(status.configuration.preferences_saved_at) }}</small></div>
           <form v-if="preferences" @submit.prevent="save"><fieldset :disabled="saving"><div class="preference-grid"><label v-for="field in fields" :key="field.key"><span>{{ field.label }}</span><div class="number-input"><input type="number" v-model.number="preferences[field.key]" :min="field.min" :max="field.max" :step="field.step || 1" required /><span>{{ field.unit }}</span></div><small>{{ field.help }}</small></label></div><div class="form-actions"><button class="button primary" :disabled="saving || !dirty" type="submit">{{ saving ? '保存中…' : '保存配置' }}</button><button class="button" :disabled="saving || !dirty" type="button" @click="discard">撤销未保存修改</button><small v-if="dirty" class="warning">有未保存的修改</small></div></fieldset></form>
@@ -59,6 +62,8 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { checkSystemDataSource, fetchSystemStatus, saveSystemPreferences } from '../api/client'
 import type { SystemPreferences, SystemState, SystemStatus } from '../api/client'
+import SystemMaintenance from '../components/system/SystemMaintenance.vue'
+import SystemPriceCoverage from '../components/system/SystemPriceCoverage.vue'
 
 const status=ref<SystemStatus|null>(null), loading=ref(false), checking=ref(false), saving=ref(false)
 const error=ref(''),operationError=ref(''),notice=ref(''),tab=ref('overview'),autoRefresh=ref(false),showAllAlerts=ref(false)
@@ -83,7 +88,7 @@ async function diagnose(){if(checking.value)return;checking.value=true;notice.va
 async function save(){if(!preferences.value || saving.value)return;saving.value=true;notice.value='';operationError.value='';try{const result=await saveSystemPreferences({...preferences.value});if(disposed)return;preferences.value={...result};savedPreferences.value={...result};notice.value='常用配置已保存，对后续请求和状态判断生效。';await load()}catch(e:any){if(!disposed)operationError.value=errorMessage(e,'配置保存失败')}finally{saving.value=false}}
 function discard(){if(savedPreferences.value)preferences.value={...savedPreferences.value}}
 function tone(value:SystemState){return ['ok','success','cached','skipped'].includes(value)?'good':['error','interrupted'].includes(value)?'bad':['warning','partial','stale','empty','missing'].includes(value)?'warning':value==='running'?'running':'muted'}
-function statusText(value:SystemState){const labels:Record<SystemState,string>={ok:'通过',warning:'需关注',error:'异常',unknown:'待确认',cached:'有缓存',empty:'无记录',partial:'部分缺失',stale:'滞后',success:'已完成',running:'运行中',skipped:'已跳过',missing:'无执行记录',unverified:'结果待核验',interrupted:'已中断'};return labels[value] || value}
+function statusText(value:SystemState){const labels:Record<SystemState,string>={ok:'通过',warning:'需关注',error:'异常',unknown:'待确认',cached:'有缓存',empty:'无记录',partial:'部分缺失',stale:'滞后',success:'已完成',running:'运行中',skipped:'已跳过',missing:'无执行记录',unverified:'结果待核验',interrupted:'已中断',idle:'按需执行',queued:'已提交'};return labels[value] || value}
 function formatTime(value?:string|null){if(!value)return '—';const date=new Date(value);return Number.isNaN(date.getTime())?'时间无效':new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(date)}
 function sampleDate(value:string){return /^\d{8}$/.test(value)?`${value.slice(0,4)}-${value.slice(4,6)}-${value.slice(6,8)}`:value}
 function bytes(value:number|null){if(value===null)return '—';return value>=1024**3?`${(value/1024**3).toFixed(2)} GB`:`${(value/1024**2).toFixed(1)} MB`}

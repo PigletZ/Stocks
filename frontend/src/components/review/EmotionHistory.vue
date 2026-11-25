@@ -16,7 +16,7 @@
 
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import * as echarts from 'echarts'
+import * as echarts from '../../utils/charts'
 import { fetchEmotionSeries, type EmotionItem } from '../../api/client'
 
 const items = ref<EmotionItem[]>([])

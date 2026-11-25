@@ -69,7 +69,7 @@ class SystemTests(unittest.TestCase):
         self.assertEqual(indices['status'], 'unknown')
         self.assertIsNone(result['summary']['expected_date'])
         self.assertGreater(result['summary']['alert_count'], 0)
-        self.assertEqual(result['summary']['data_total'], 8)
+        self.assertEqual(result['summary']['data_total'], 9)
         self.assertTrue(result['generated_at'].endswith('+00:00'))
 
     def test_fresh_max_date_with_one_index_is_incomplete(self):
@@ -216,7 +216,7 @@ class SystemTests(unittest.TestCase):
                 'app.services.tushare_client.requests.post', return_value=Mock(status_code=502)) as post:
             report = diagnostics.run()
             repeated = diagnostics.run()
-        self.assertEqual(post.call_count, 7)
+        self.assertEqual(post.call_count, 9)
         self.assertEqual(report['status'], 'error')
         self.assertTrue(all(item['http_status'] == 502 for item in report['checks']))
         self.assertEqual(repeated['checked_at'], report['checked_at'])
@@ -237,6 +237,8 @@ class SystemTests(unittest.TestCase):
                 items = [['SSE',day.strftime('%Y%m%d'),int(day.weekday()<5)] for day in days]
             elif api in {'daily','index_daily','fund_daily'}:
                 fields, items = ['ts_code','trade_date','close'], [[params['ts_code'],'20261119',1]]
+            elif api in {'adj_factor', 'fund_adj'}:
+                fields, items = ['ts_code', 'trade_date', 'adj_factor'], [[params['ts_code'], '20261119', 1]]
             else:
                 fields, items = ['ts_code','end_date'], [[params['ts_code'],'20260930']]
             response = Mock(status_code=200)
@@ -248,7 +250,7 @@ class SystemTests(unittest.TestCase):
                 'app.services.tushare_client.requests.post', side_effect=respond):
             result = SystemDiagnostics(self.store).run()
         self.assertEqual(result['status'], 'ok')
-        self.assertEqual(len(result['checks']), 7)
+        self.assertEqual(len(result['checks']), 9)
         self.assertIsNotNone(self.etf.cached_trade_dates(date(2026, 9, 20),date(2026, 11, 19)))
         self.assertFalse(list(self.etf._frame_cache.directory.glob('daily-*.json')))
 

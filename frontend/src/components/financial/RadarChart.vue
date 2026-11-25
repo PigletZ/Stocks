@@ -8,7 +8,7 @@
 
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import * as echarts from 'echarts'
+import * as echarts from '../../utils/charts'
 
 const props = defineProps<{
   radar: { dims: string[]; series: { name: string; values: (number | null)[] }[] }

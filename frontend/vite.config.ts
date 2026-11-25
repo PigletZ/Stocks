@@ -10,10 +10,10 @@ export default defineConfig({
     chunkSizeWarningLimit: 1000,
     rollupOptions: {
       output: {
-        manualChunks: {
-          echarts: ['echarts'],
-          'lightweight-charts': ['lightweight-charts'],
-          vue: ['vue', 'vue-router', 'pinia'],
+        manualChunks(id) {
+          if (id.includes('/node_modules/echarts/') || id.includes('/node_modules/zrender/')) return 'charts'
+          if (id.includes('/node_modules/lightweight-charts/')) return 'lightweight-charts'
+          if (/\/node_modules\/(vue|@vue|vue-router|pinia)\//.test(id)) return 'vue'
         },
       },
     },

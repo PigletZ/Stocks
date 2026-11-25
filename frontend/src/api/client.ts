@@ -1144,7 +1144,7 @@ export async function deleteHolding(code: string): Promise<{ message: string }> 
 
 // ==================== 系统管理 ====================
 
-export type SystemState = 'ok' | 'warning' | 'error' | 'unknown' | 'cached' | 'empty' | 'partial' | 'stale' | 'success' | 'running' | 'skipped' | 'missing' | 'unverified' | 'interrupted'
+export type SystemState = 'ok' | 'warning' | 'error' | 'unknown' | 'cached' | 'empty' | 'partial' | 'stale' | 'success' | 'running' | 'skipped' | 'missing' | 'unverified' | 'interrupted' | 'idle' | 'queued'
 
 export interface SystemDbInfo {
   name: string | null
@@ -1208,12 +1208,28 @@ export interface SystemStatus {
   database: SystemDbInfo
   tables: TableFreshness[]
   cron_jobs: CronJobHealth[]
+  price_coverage: PriceCoverage[]
   diagnostics: DataSourceReport
-  cache: { status: SystemState; snapshots: number; latest_date: string | null; size_bytes: number; basic_available: boolean; note: string }
+  cache: { status: SystemState; snapshots: number; latest_date: string | null; factor_snapshots: number; latest_factor_date: string | null; size_bytes: number; basic_available: boolean; note: string }
   backup: { status: SystemState; created_at: string | null; verified_at: string | null; size_bytes: number | null; filename: string | null; message: string }
   configuration: { tushare_configured: boolean; authentication_configured: boolean; public_host_configured: boolean; preferences_status: string; preferences_saved_at: string | null; note: string }
   preferences: SystemPreferences
   runtime: { status: SystemState; started_at: string; version: string | null }
+}
+
+export interface PriceCoverage {
+  key: string; label: string; status: SystemState; message: string; effective_date: string | null; expected_date: string | null; note: string
+  windows: { days: number; base_date: string | null; valid: number; total: number; missing_factors: number; coverage_pct: number | null }[]
+}
+export interface MaintenanceJob {
+  action: 'daily' | 'factors' | 'backup'; name: string; description: string; status: SystemState; message: string
+  requested_at: string | null; next_allowed_at: string | null; can_start: boolean; record: JobRunRecord | null
+}
+export async function fetchMaintenanceJobs(signal?: AbortSignal): Promise<MaintenanceJob[]> {
+  return (await api.get('/system/maintenance', { signal, timeout: 15000 })).data
+}
+export async function startMaintenance(action: MaintenanceJob['action']): Promise<{accepted: boolean; job: MaintenanceJob}> {
+  return (await api.post('/system/maintenance/' + action, undefined, {timeout: 15000})).data
 }
 
 export async function fetchSystemStatus(signal?: AbortSignal): Promise<SystemStatus> {

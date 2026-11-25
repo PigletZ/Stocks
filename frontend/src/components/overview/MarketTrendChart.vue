@@ -5,7 +5,7 @@
 
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted } from 'vue'
-import * as echarts from 'echarts'
+import * as echarts from '../../utils/charts'
 import type { DashboardSnapshot } from '../../api/client'
 const props = defineProps<{ history: DashboardSnapshot[]; range: number }>()
 const container = ref<HTMLDivElement | null>(null)

@@ -1,7 +1,7 @@
 <template><section class="panel"><header><div><h2>同期经营趋势</h2><p>只比较相同季末的累计报告，截止 {{ period }}；缺失值留空。</p></div><select v-model="code"><option v-for="s in stocks" :key="s.code" :value="s.code">{{ s.name }}</option></select><select v-model="mode"><option value="money">收入、利润与现金流</option><option value="margin">毛利率与净利率</option></select></header><p v-if="periods.length<2">同期数据不足两期，暂无法判断趋势。</p><div ref="container" class="chart"></div></section></template>
 <script setup lang="ts">
 import { computed,ref,watch,onMounted,onUnmounted } from 'vue'
-import * as echarts from 'echarts'
+import * as echarts from '../../utils/charts'
 import type { FinStockCompare,FinMetrics } from '../../api/client'
 const props=defineProps<{stocks:FinStockCompare[];period:string}>()
 const code=ref(props.stocks[0]?.code || ''), mode=ref('money')

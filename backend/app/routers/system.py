@@ -5,8 +5,24 @@ from ..database import get_session
 from ..services.system_service import SystemService
 from ..services.system_diagnostics import SystemDiagnostics, DiagnosticBusy
 from ..services.runtime_state import SystemPreferences, save_preferences
+from ..services.system_maintenance import Action, MaintenanceBusy, maintenance_statuses, start_maintenance
 
 router = APIRouter()
+
+
+@router.get('/maintenance')
+def maintenance_progress():
+    return maintenance_statuses()
+
+
+@router.post('/maintenance/{action}', status_code=202)
+def launch_maintenance(action: Action):
+    try:
+        return start_maintenance(action)
+    except MaintenanceBusy as error:
+        raise HTTPException(409, str(error)) from None
+    except OSError:
+        raise HTTPException(503, '维护任务暂未成功提交，请刷新执行状态后重试。') from None
 
 
 @router.get("/status")

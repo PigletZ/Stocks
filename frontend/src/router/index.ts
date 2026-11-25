@@ -1,14 +1,14 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import OverviewView from '../views/OverviewView.vue'
-import StockListView from '../views/StockListView.vue'
-import WatchlistView from '../views/WatchlistView.vue'
-import StockDetailView from '../views/StockDetailView.vue'
-import EtfListView from '../views/EtfListView.vue'
-import FinancialAnalysisView from '../views/FinancialAnalysisView.vue'
-import ReviewWorkbenchView from '../views/ReviewWorkbenchView.vue'
-import JournalView from '../views/JournalView.vue'
-import SystemView from '../views/SystemView.vue'
-import LoginView from '../views/LoginView.vue'
+const OverviewView = () => import('../views/OverviewView.vue')
+const StockListView = () => import('../views/StockListView.vue')
+const WatchlistView = () => import('../views/WatchlistView.vue')
+const StockDetailView = () => import('../views/StockDetailView.vue')
+const EtfListView = () => import('../views/EtfListView.vue')
+const FinancialAnalysisView = () => import('../views/FinancialAnalysisView.vue')
+const ReviewWorkbenchView = () => import('../views/ReviewWorkbenchView.vue')
+const JournalView = () => import('../views/JournalView.vue')
+const SystemView = () => import('../views/SystemView.vue')
+const LoginView = () => import('../views/LoginView.vue')
 import { useAuthStore } from '../stores/auth'
 
 const router = createRouter({

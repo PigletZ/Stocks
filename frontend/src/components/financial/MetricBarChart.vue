@@ -14,7 +14,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import * as echarts from 'echarts'
+import * as echarts from '../../utils/charts'
 import type { FinStockCompare } from '../../api/client'
 
 const props = defineProps<{ stocks: FinStockCompare[] }>()
