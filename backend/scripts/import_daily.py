@@ -10,12 +10,14 @@ from app.database import engine
 from app.services.daily_sync import DailySyncService
 from app.services.job_monitor import tracked_job
 from app.services.review_workbench import today_shanghai
+from scripts.sync_price_factors import sync_recent_factors
 
 
 @tracked_job("daily")
 def main():
     with Session(engine) as session:
         DailySyncService().sync_recent(today_shanghai(), session)
+        sync_recent_factors(session, today_shanghai())
 
 
 if __name__ == "__main__":

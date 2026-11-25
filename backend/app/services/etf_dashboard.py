@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 from statistics import median
 
 from .etf_service import _extract_category
+from .price_basis import price_change
+import pandas as pd
 
 
 def _number(value):
@@ -47,12 +49,24 @@ def build_dashboard(service, target_date=None, min_amount=10000000):
         bases[window] = {str(r["code"]): _number(r.get("close")) for r in frame.to_dict("records")} if frame is not None else {}
         base_dates[str(window)] = day.isoformat() if day else None
     result = summarize(basic.to_dict("records"), end.to_dict("records"), bases,
-                       target.isoformat(), effective.isoformat(), base_dates, min_amount)
+                       target.isoformat(), effective.isoformat(), base_dates, min_amount,
+                       factor_maps=_factor_maps(service, effective, base_dates), price_basis='adjusted')
     result["cache_fallbacks"] = service.cache_fallbacks()
     return result
 
 
-def summarize(basic, daily, bases, target, effective, base_dates, min_amount):
+def _factor_maps(service, effective, base_dates):
+    result = {}
+    for day in {effective} | {datetime.strptime(value, '%Y-%m-%d').date() for value in base_dates.values() if value}:
+        try:
+            frame = service._fetch_etf_factors_for_date(day)
+            result[str(day)] = {row['code']: row['adj_factor'] for row in frame.to_dict('records')} if isinstance(frame, pd.DataFrame) else {}
+        except RuntimeError:
+            result[str(day)] = {}
+    return result
+
+
+def summarize(basic, daily, bases, target, effective, base_dates, min_amount, factor_maps=None, price_basis='raw'):
     quotes = {str(row["code"]): row for row in daily}
     items = []
     quoted_count = 0
@@ -76,7 +90,11 @@ def summarize(basic, daily, bases, target, effective, base_dates, min_amount):
                 "close": close, "amount": amount, "change_pct": _number(row.get("pct_chg"))}
         for window in (2, 5, 10, 20):
             base = _number(bases.get(window, {}).get(code))
-            item[f"gain_{window}"] = round((close / base - 1) * 100, 2) if base is not None and base > 0 else None
+            factors = factor_maps or {}
+            change = price_change(base, close, factors.get(base_dates.get(str(window)), {}).get(code), factors.get(effective, {}).get(code), price_basis)
+            item[f"gain_{window}"] = round(float(change), 2) if change is not None else None
+            raw = price_change(base, close, basis='raw')
+            item[f'raw_gain_{window}'] = round(float(raw), 2) if raw is not None else None
         short, middle, long = item["gain_2"], item["gain_5"], item["gain_20"]
         item["state"] = "数据不足" if middle is None or long is None or short is None else (
             "短长同强" if short > 0 and middle > 0 and long > 0 else
@@ -100,4 +118,6 @@ def summarize(basic, daily, bases, target, effective, base_dates, min_amount):
     return {"target_date": target, "effective_date": effective, "base_dates": base_dates,
             "min_amount": min_amount, "quoted_count": quoted_count, "items": items,
             "directions": directions,
-            "missing_windows": [w for w in (2, 5, 10, 20) if not bases.get(w)]}
+            "missing_windows": [w for w in (2, 5, 10, 20) if not bases.get(w)],
+            'price_basis': price_basis, 'basis_label': '复权区间价格变化' if price_basis == 'adjusted' else '原始收盘价变化',
+            'factor_coverage': {str(w): {'valid': sum(row[f'gain_{w}'] is not None for row in items), 'total': len(items)} for w in (2,5,10,20)}}

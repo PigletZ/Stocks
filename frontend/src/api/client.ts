@@ -455,6 +455,7 @@ export interface TopGainersResponse {
   five_day: TopGainerItem[]
   ten_day: TopGainerItem[]
   twenty_day: TopGainerItem[]
+  price_basis?: 'adjusted'; warnings?: string[]; factor_coverage?: Record<string,{valid:number;total:number}>
 }
 
 export async function fetchTopGainers(date?: string): Promise<TopGainersResponse> {
@@ -480,6 +481,7 @@ export interface EtfObservation {
   code: string; name: string; category: string; benchmark: string; management: string
   close: number; amount: number; change_pct: number | null
   gain_2: number | null; gain_5: number | null; gain_10: number | null; gain_20: number | null
+  raw_gain_2: number | null; raw_gain_5: number | null; raw_gain_10: number | null; raw_gain_20: number | null
   state: string
 }
 export interface EtfDirection {
@@ -490,6 +492,7 @@ export interface EtfDashboard {
   target_date: string; effective_date: string; base_dates: Record<string, string | null>
   min_amount: number; quoted_count: number; items: EtfObservation[]; directions: EtfDirection[]; missing_windows: number[]
   cache_fallbacks: { resource: string; fetched_at: string }[]
+  price_basis:'adjusted'; basis_label:string; factor_coverage:Record<string,{valid:number;total:number}>
 }
 export async function fetchEtfDashboard(date: string, minAmount: number, signal?: AbortSignal): Promise<EtfDashboard> {
   const { data } = await api.get('/etfs/dashboard', { params: { date, min_amount: minAmount }, signal, timeout: 120000 })
@@ -873,6 +876,7 @@ export interface ReviewObservation {
   id: number; code: string; name: string; observation_date: string; deadline: string
   reason: string; criterion: string; created_at: string; base_close: number | null; close: number | null
   price_change: number | null; verdict: string; explanation: string; verified_on: string | null; verified_at: string | null
+  adjusted_price_change: number | null; price_basis: 'adjusted'; price_basis_label: string
 }
 export interface ReviewWorkbenchData {
   date: string; previous_date: string | null; available_dates: string[]; snapshot: DashboardSnapshot | null
@@ -889,7 +893,7 @@ export async function fetchReviewWorkbench(date?: string, signal?: AbortSignal):
   const { data } = await api.get('/review/workbench', { params: { date, include_observations: false }, signal })
   return data
 }
-export interface ReviewConditionSpec { kind: 'end_change' | 'hold_change'; operator: 'ge' | 'le'; threshold_pct: string; note: string }
+export interface ReviewConditionSpec { kind: 'end_change' | 'hold_change'; operator: 'ge' | 'le'; threshold_pct: string; note: string; price_basis: 'raw' | 'adjusted' }
 export async function createReviewObservation(body: { code: string; observation_date: string; reason: string; criterion: string; deadline: string; condition?: ReviewConditionSpec }): Promise<{id:number}> {
   const { data } = await api.post('/review/observations', body)
   return data
@@ -902,11 +906,13 @@ export async function verifyReviewObservation(id: number, date: string, verdict:
 export interface ReviewCondition {
   id: number; effective_date: string; kind: 'end_change' | 'hold_change'; operator: 'ge' | 'le'
   threshold_pct: string; note: string; created_at: string; description: string
+  price_basis: 'raw' | 'adjusted'; basis_label: string
 }
 export interface ReviewEvaluation {
   status: 'not_configured' | 'pending' | 'met' | 'not_met' | 'unknown'; label: string; message: string
   expected_samples: number | null; valid_samples: number | null; missing_dates: string[]
   first_violation: string | null; end_date: string | null; end_change_pct: number | null
+  price_basis: 'raw' | 'adjusted'; basis_label: string; missing_factor_dates: string[]
 }
 export interface ReviewFact { id: string; label: string; value: unknown }
 export interface ReviewAuditItem { text: string; evidence_ids: string[] }
@@ -915,7 +921,14 @@ export interface ReviewAudit {
   historical: boolean; changes: string[]
   result: { supporting_evidence: ReviewAuditItem[]; counter_evidence: ReviewAuditItem[]; uncertainties: ReviewAuditItem[]; next_checks: ReviewAuditItem[] }
   facts: ReviewFact[]
+  feedback: ReviewAuditFeedback[]
 }
+export interface ReviewAuditFeedback {
+  id: number; audit_id: number; section: keyof ReviewAudit['result']; item_index: number
+  rating: 'helpful' | 'misunderstood' | 'insufficient'; comment: string; date: string; created_at: string; revisions: number
+}
+export interface ReviewFeedbackSummary { rated_count: number; helpful: number; misunderstood: number; insufficient: number; note: string }
+export interface ReviewFeedbackHistory {items:ReviewAuditFeedback[]; total:number; page:number; pages:number}
 export interface ReviewAssistantEntry {
   observation_id: number; code: string; rule: ReviewCondition | null; evaluation: ReviewEvaluation; audit: ReviewAudit | null
 }
@@ -927,6 +940,7 @@ export interface ReviewAssistantData {
   date: string; ai: { configured: boolean; model: string | null; message: string }; entries: ReviewAssistantEntry[]
   reminders: ReviewReminder[]; active_count: number; scope_count: number; pending_count: number
   page: number; page_size: number; pages: number; total: number
+  feedback_summary: ReviewFeedbackSummary
 }
 export async function fetchReviewAssistant(date: string, signal?: AbortSignal, options?: {page:number;include_hidden:boolean}): Promise<ReviewAssistantData> {
   const { data } = await api.get('/review/assistant', { params: { date, include_entries: false, ...options }, signal })
@@ -965,7 +979,7 @@ export async function fetchReviewDeadlines(date: string, signal?: AbortSignal): 
   const { data } = await api.get('/review/deadlines', { params: { date }, signal })
   return data
 }
-export async function confirmReviewCondition(id: number, body: { effective_date: string; kind: string; operator: string; threshold_pct: string; note: string }): Promise<ReviewCondition> {
+export async function confirmReviewCondition(id: number, body: { effective_date: string; kind: string; operator: string; threshold_pct: string; note: string; price_basis: string }): Promise<ReviewCondition> {
   const { data } = await api.post(`/review/observations/${id}/conditions`, body)
   return data
 }
@@ -979,6 +993,18 @@ export async function auditReviewObservation(id: number, date: string, force = f
 }
 export async function updateReviewReminder(key: string, date: string, action: 'read' | 'snooze' | 'reset', snooze_until?: string) {
   const { data } = await api.put(`/review/reminders/${key}`, { date, action, snooze_until })
+  return data
+}
+export async function syncReviewFactors(id:number,date:string):Promise<{written_rows:number}> {
+  const {data}=await api.post(`/review/observations/${id}/factors`,null,{params:{date},timeout:90000})
+  return data
+}
+export async function saveReviewAuditFeedback(id:number,auditId:number,body:Pick<ReviewAuditFeedback,'date'|'section'|'item_index'|'rating'|'comment'>):Promise<ReviewAuditFeedback> {
+  const {data}=await api.post(`/review/observations/${id}/audits/${auditId}/feedback`,body)
+  return data
+}
+export async function fetchReviewAuditFeedbackHistory(id:number,auditId:number,date:string,section:keyof ReviewAudit['result'],item_index:number,page:number,signal?:AbortSignal):Promise<ReviewFeedbackHistory> {
+  const {data}=await api.get(`/review/observations/${id}/audits/${auditId}/feedback`,{params:{date,section,item_index,page},signal})
   return data
 }
 

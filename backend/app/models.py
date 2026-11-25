@@ -205,6 +205,7 @@ class ReviewCondition(SQLModel, table=True):
     kind: str  # end_change / hold_change
     operator: str  # ge / le
     threshold_pct: str  # Decimal 百分比文本，避免边界比较的浮点误差
+    price_basis: str = "raw"  # 旧版本保留原始收盘口径；新规则由用户明确选择
     note: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -229,6 +230,29 @@ class ReviewAudit(SQLModel, table=True):
     prompt_version: int = 1
     context_json: str
     result_json: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class StockAdjustmentFactor(SQLModel, table=True):
+    __tablename__ = "stock_adjustment_factor"
+    __table_args__ = (UniqueConstraint("stock_code", "trade_date", name="uix_adjustment_code_date"),)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    stock_code: str = Field(index=True)
+    trade_date: date = Field(index=True)
+    factor: str
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ReviewAuditFeedback(SQLModel, table=True):
+    """逐条意见的人工标注；修改追加版本，不改写模型原文或人工验证。"""
+    __tablename__ = "review_audit_feedback"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    audit_id: int = Field(foreign_key="review_audit.id", index=True)
+    section: str
+    item_index: int
+    rating: str  # helpful / misunderstood / insufficient
+    comment: str = ""
+    effective_date: date = Field(index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 

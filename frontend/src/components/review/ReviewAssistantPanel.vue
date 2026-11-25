@@ -6,13 +6,14 @@
     <div class="toolbar"><span v-if="data" class="ai-state">{{ data.ai.configured ? 'AI 审阅可用 · '+data.ai.model : 'AI 审阅尚未配置' }}</span><label><input type="checkbox" v-model="includeHidden" /> 查看已读与暂缓事项</label><small v-if="data">待验证 {{ data.pending_count }} 条 · 核查范围 {{ data.scope_count }} 条</small></div>
     <p v-if="loading" class="muted">正在核对本地关注记录…</p>
     <template v-else-if="data">
+      <p class="muted">AI 意见反馈 {{ data.feedback_summary.rated_count }} 条：有帮助 {{ data.feedback_summary.helpful }} · 理解有误 {{ data.feedback_summary.misunderstood }} · 证据不足 {{ data.feedback_summary.insufficient }}。{{ data.feedback_summary.note }}</p>
       <div v-for="item in data.reminders" :key="item.key" class="reminder" :class="[item.level,{hidden:item.hidden}]">
         <div class="reminder-body"><button class="stock-link" @click="$emit('focus',item.observation_id)">{{ item.name }} {{ item.code }}</button><strong>{{ item.title }}</strong><p>{{ item.message }}</p><small v-if="item.hidden">{{ item.snooze_until ? '暂缓至 '+item.snooze_until : '已读；新的条件反例仍会单独提醒' }}</small></div>
         <div class="actions"><button @click="$emit('focus',item.observation_id)">查看关注</button><template v-if="!item.hidden"><button :disabled="!!working" @click="act(item,'read')">已读</button><button :disabled="!!working" @click="act(item,'snooze')">次日再提醒</button></template><button v-else :disabled="!!working" @click="act(item,'reset')">恢复提醒</button></div>
       </div>
       <p v-if="!data.reminders.length" class="empty">{{ data.scope_count ? '当前没有未处理提醒。仍可在关注清单中查看历史意见或主动审阅。' : '添加一条关注及验证期限后，这里会集中显示需要处理的事项。' }}</p>
       <div v-if="data.pages>1" class="pagination"><button :disabled="data.page<=1 || loading" @click="go(data.page-1)">上一页</button><span>{{ data.page }} / {{ data.pages }} · {{ data.total }} 条提醒</span><button :disabled="data.page>=data.pages || loading" @click="go(data.page+1)">下一页</button></div>
-      <small class="footnote">{{ data.ai.message }} 价格核对使用未复权收盘价，缺失数据保留为未知。</small>
+      <small class="footnote">{{ data.ai.message }} 价格核对按各条规则确认的口径；缺少报价或复权因子时保留为未知。</small>
     </template>
   </section>
 </template>
@@ -21,7 +22,7 @@ import { onUnmounted, ref, watch } from 'vue'
 import { fetchReviewAssistant, updateReviewReminder } from '../../api/client'
 import type { ReviewAssistantData, ReviewReminder } from '../../api/client'
 import { createLatestLoader } from '../../utils/latestLoader'
-const props=defineProps<{date:string;revision:number}>()
+const props=defineProps<{date:string;revision:number;feedbackRevision:number}>()
 defineEmits<{focus:[id:number]}>()
 const data=ref<ReviewAssistantData|null>(null),loading=ref(false),error=ref(''),notice=ref(''),working=ref(''),includeHidden=ref(false),page=ref(1)
 let generation=0,disposed=false
@@ -37,7 +38,7 @@ async function act(item:ReviewReminder,action:'read'|'snooze'|'reset'){
   catch(e:any){if(!disposed&&current===generation)notice.value=e?.response?.data?.detail||'处理结果尚未确认，请刷新查看。'}
   finally{if(current===generation)working.value=''}
 }
-watch(()=>[props.date,props.revision,includeHidden.value],(value,old)=>{generation++;working.value='';notice.value='';if(!old||value[0]!==old[0]||value[2]!==old[2])page.value=1;data.value=null;load()},{immediate:true})
+watch(()=>[props.date,props.revision,includeHidden.value,props.feedbackRevision],(value,old)=>{generation++;working.value='';notice.value='';if(!old||value[0]!==old[0]||value[2]!==old[2])page.value=1;data.value=null;load()},{immediate:true})
 onUnmounted(()=>{disposed=true;generation++;loader.dispose()})
 </script>
 <style scoped>

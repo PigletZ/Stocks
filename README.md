@@ -7,6 +7,7 @@
 - **概览**：日概览（指数/市场统计/情绪趋势/板块排行）、涨停、跌停、龙虎榜、涨幅榜，支持按交易日回看
 - **复盘工作台**：强势股后续结果、连板结构变化、带日期的关注验证、复盘草稿与交易台账
 - **复盘审阅**：股票搜索与关注模板、真实交易日期限、分页关注清单、完整待办提醒、版本化价格规则，以及可跨日追踪的 Kimi AI 审阅与原始证据
+- **价格口径与意见反馈**：区间复权变化与原始报价分别展示，旧规则保留原口径；AI 逐条人工反馈、修正依据及版本历史独立保存
 - **A 股**：全市场股票列表（搜索/筛选/排序）、自选股分组管理、股票详情（K 线 + 复盘回放模拟交易）
 - **财务分析**：1~10 只股票三大报表对比（体检卡/指标对比/五维雷达/全科目报表，不支持银行股）
 - **ETF**：全 ETF 列表（品类筛选/排序）、ETF 涨幅榜
@@ -120,6 +121,9 @@ AI 仅在点击审阅时发送对应关注的资料，不自动批量运行。�
 - 16:20 策略行情快照（`scripts/sync_strategy_data.py --quote-days 5 --skip-bars`）
 - 16:40 K 线数据（`scripts/sync_strategy_data.py --quote-days 1 --bar-days 10`）
 - 19:00 财报增量校验 + 亮点 Top100 算榜（`scripts/sync_fin_daily.py`，每天）
+
+日概览任务及晚间补齐同时维护复权因子。升级价格口径时，先备份并执行 `PYTHONPATH=. python scripts/migrate_add_price_basis_feedback.py`，再运行 `python scripts/sync_price_factors.py --days 35` 回填近期因子；不覆盖原始行情或把旧规则改成新口径。
+因子计算依据：[股票因子](https://tushare.pro/document/2?doc_id=28)、[股票复权说明](https://tushare.pro/document/2?doc_id=146)、[基金因子](https://tushare.pro/document/2?doc_id=199)。
 
 页面同时保留手动同步入口。
 

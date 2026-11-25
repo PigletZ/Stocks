@@ -8,6 +8,7 @@ from .review_ai import ai_status
 from .review_assistant import ReviewAssistant, audit_view
 from .review_records import latest_records, observation_query, query_count
 from .review_workbench import ReviewWorkbench
+from .review_feedback import attach_feedback
 
 
 def page_records(session, statement, page, page_size):
@@ -43,7 +44,7 @@ def observation_detail(session, observation, as_of, assistant=None):
     return {"observation": ReviewWorkbench.observations(session, as_of, records=[observation])[0],
             "entry": {"observation_id": observation.id, "code": observation.stock_code, "rule": current["rule"],
                       "evaluation": current["evaluation"],
-                      "audit": audit_view(latest, current["context_hash"], current["context"]) if latest else None},
+                      "audit": attach_feedback(session, audit_view(latest, current["context_hash"], current["context"]), as_of) if latest else None},
             "ai": ai_status()}
 
 

@@ -19,6 +19,7 @@
     </div>
 
     <div v-if="error" class="error">{{ error }}</div>
+    <p style="font-size:12px;color:#94a3b8;line-height:1.8">K 线和回放显示原始未复权价格。跨日比较使用概览或复盘中的复权指标；成交价格与区间分析口径分别保留。</p>
 
     <div class="info-panel" v-if="stock.code">
       <div class="info-item">

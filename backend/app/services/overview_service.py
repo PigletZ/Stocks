@@ -491,18 +491,33 @@ class OverviewService:
 
         quote_map = {(q.stock_code, q.trade_date): q for q, _ in rows}
         stock_map = {q.stock_code: s for q, s in rows}
+        from .price_basis import StockFactorService, load_stock_factors
+        source, warnings = StockFactorService(), []
+        for day in sorted(needed_dates):
+            try:
+                if not source.sync_day(session, day):
+                    warnings.append(f'{day} 复权因子尚未齐备')
+            except (RuntimeError, ValueError):
+                session.rollback()
+                warnings.append(f'{day} 复权因子未能刷新，使用已有同日因子；缺失样本不排名')
+        factor_map = load_stock_factors(session, stock_map, min(needed_dates), effective_date, dates=needed_dates)
+        coverage = {}
+        for window, base in ((5, five_base), (10, ten_base), (20, twenty_base)):
+            comparable = [code for code in stock_map if (code, effective_date) in quote_map and (code, base) in quote_map]
+            coverage[str(window)] = {'valid': sum((code,effective_date) in factor_map and (code,base) in factor_map for code in comparable), 'total': len(comparable)}
 
         return {
             "target_date": target_date.isoformat(),
             "effective_date": effective_date.isoformat(),
+            'price_basis': 'adjusted', 'factor_coverage': coverage, 'warnings': warnings,
             "five_day": self._build_gainer_ranking(
-                effective_date, five_base, quote_map, stock_map, session
+                effective_date, five_base, quote_map, stock_map, session, factor_map
             ),
             "ten_day": self._build_gainer_ranking(
-                effective_date, ten_base, quote_map, stock_map, session
+                effective_date, ten_base, quote_map, stock_map, session, factor_map
             ),
             "twenty_day": self._build_gainer_ranking(
-                effective_date, twenty_base, quote_map, stock_map, session
+                effective_date, twenty_base, quote_map, stock_map, session, factor_map
             ),
         }
 
@@ -628,6 +643,7 @@ class OverviewService:
         quote_map: Dict,
         stock_map: Dict[str, "Stock"],
         session: Session,
+        factor_map=None,
     ) -> List[dict]:
         """构建单期涨幅榜前 10。"""
         from ..models import Stock
@@ -635,6 +651,9 @@ class OverviewService:
 
         if start_date is None:
             return []
+        from .price_basis import load_stock_factors, price_change
+        if factor_map is None:
+            factor_map = load_stock_factors(session, stock_map, start_date, end_date, dates={start_date,end_date})
 
         candidates = []
         codes = []
@@ -646,11 +665,13 @@ class OverviewService:
             if q_now.close is None or q_then.close is None or q_then.close <= 0:
                 continue
 
-            gain = (q_now.close / q_then.close - 1) * 100
+            gain = price_change(q_then.close, q_now.close, factor_map.get((code,start_date)), factor_map.get((code,end_date)))
+            if gain is None:
+                continue
             candidates.append({
                 "code": code,
                 "close": q_now.close,
-                "gain": gain,
+                "gain": float(gain),
                 "amount": q_now.amount or 0,
                 "turnover_rate": q_now.turnover_rate or 0,
             })

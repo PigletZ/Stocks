@@ -104,8 +104,11 @@ class ReviewWorkbench:
                 StockDailyQuote.stock_code.in_({r.stock_code for r in batch}), StockDailyQuote.trade_date.in_(dates))).all()
             prices.update({(code, day): close for code, day, close in quotes})
         result = []
+        from .price_basis import load_stock_factors, price_change
+        factors = load_stock_factors(session, codes, min(r.observation_date for r in observations), d, dates={row.observation_date for row in observations}|{d}) if observations else {}
         for r in observations:
             base, current = prices.get((r.stock_code, r.observation_date)), prices.get((r.stock_code, d))
+            adjusted_change = price_change(base, current, factors.get((r.stock_code, r.observation_date)), factors.get((r.stock_code, d)))
             v = latest.get(r.id)
             result.append({"id": r.id, "code": r.stock_code, "name": names.get(r.stock_code, r.stock_code),
                            "observation_date": r.observation_date.isoformat(), "reason": r.reason,
@@ -113,6 +116,8 @@ class ReviewWorkbench:
                            "created_at": r.created_at.replace(tzinfo=timezone.utc).isoformat(),
                            "base_close": base, "close": current,
                            "price_change": round((current/base-1)*100, 2) if base and base > 0 and current is not None else None,
+                           "adjusted_price_change": round(float(adjusted_change), 2) if adjusted_change is not None else None,
+                           "price_basis": "adjusted", "price_basis_label": "复权区间价格变化",
                            "verdict": v.verdict if v else "待验证", "explanation": v.explanation if v else "",
                            "verified_on": v.review_date.isoformat() if v else None,
                            "verified_at": v.updated_at.replace(tzinfo=timezone.utc).isoformat() if v else None})

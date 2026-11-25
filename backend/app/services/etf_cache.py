@@ -55,9 +55,10 @@ class EtfFrameCache:
                 json.dump(payload, handle, ensure_ascii=False)
             os.replace(temporary, self._path(key))
             # 与原内存缓存一致，仅保留最近写入的 100 个日线快照。
-            snapshots = sorted(self.directory.glob("daily-*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
-            for old in snapshots[get_preferences().etf_snapshot_limit:]:
-                old.unlink()
+            for prefix in ('daily-', 'factor-'):
+                snapshots = sorted(self.directory.glob(prefix+'*.json'), key=lambda path: path.stat().st_mtime, reverse=True)
+                for old in snapshots[get_preferences().etf_snapshot_limit:]:
+                    old.unlink()
         except (OSError, ValueError, TypeError):
             logger.warning("ETF 持久缓存写入失败，当前请求仍使用已获取的数据")
         finally:
@@ -68,6 +69,7 @@ class EtfFrameCache:
                     pass
 
     def _trim_memory(self):
-        daily_keys = [key for key in self._memory if key.startswith("daily-")]
-        for key in daily_keys[:-get_preferences().etf_snapshot_limit]:
-            del self._memory[key]
+        for prefix in ('daily-', 'factor-'):
+            keys = [key for key in self._memory if key.startswith(prefix)]
+            for key in keys[:-get_preferences().etf_snapshot_limit]:
+                del self._memory[key]

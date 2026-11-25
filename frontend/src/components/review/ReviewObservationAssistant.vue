@@ -1,5 +1,7 @@
 <template>
   <div class="observation-assistant">
+    <p class="muted">比较口径：{{ entry?.evaluation.basis_label || '复权区间价格变化' }}。原始报价单独保留，复权变化不等于账户实际收益。<button :disabled="!!working || ruleOpen" @click="syncFactors">{{ working==='factors'?'补齐中…':'补齐复权数据' }}</button></p>
+    <p v-if="entry?.evaluation.missing_factor_dates.length" class="warning">缺少复权因子：{{ entry.evaluation.missing_factor_dates.slice(0,8).join('、') }}。不会以原始涨幅替代复权结果。</p>
     <div class="rule-heading"><strong>条件核对</strong><span v-if="entry" class="state" :class="entry.evaluation.status">{{ entry.evaluation.label }}</span><button :disabled="!!working || !entry" @click="openRule">{{ entry?.rule ? '补充规则版本' : '确认量化条件' }}</button><button v-if="entry?.rule" :disabled="!!working" @click="toggleHistory">规则历史</button></div>
     <template v-if="entry">
       <p v-if="entry.rule">{{ entry.rule.description }}</p><p v-else class="muted">保留文字条件；确认量化规则后，才会检查收盘价是否满足条件。</p>
@@ -11,7 +13,7 @@
     <p v-else class="muted">条件及审阅状态正在核对，尚未取得状态时不能生成审阅。</p>
     <form v-if="ruleOpen" class="rule-form" @submit.prevent="saveRule">
       <fieldset :disabled="!!working"><legend>{{ entry?.rule ? '追加新版本，旧版本继续保留' : '将部分文字条件确认为价格规则' }}</legend>
-        <div class="rule-inputs"><label>核对方式<select v-model="form.kind"><option value="end_change">期限日收盘涨跌幅</option><option value="hold_change">期间每个交易日收盘涨跌幅</option></select></label><label>相对关注日收盘<select v-model="form.operator"><option value="ge">不低于</option><option value="le">不高于</option></select></label><label>涨跌幅 %<input type="number" v-model="form.threshold_pct" min="-100" max="1000" step="0.0001" required /></label></div>
+        <label>价格口径<select v-model="form.price_basis"><option value="adjusted">复权区间价格变化</option><option value="raw">原始收盘价变化（保留旧口径）</option></select></label><div class="rule-inputs"><label>核对方式<select v-model="form.kind"><option value="end_change">期限日收盘涨跌幅</option><option value="hold_change">期间每个交易日收盘涨跌幅</option></select></label><label>相对关注日收盘<select v-model="form.operator"><option value="ge">不低于</option><option value="le">不高于</option></select></label><label>涨跌幅 %<input type="number" v-model="form.threshold_pct" min="-100" max="1000" step="0.0001" required /></label></div>
         <p class="muted">期限 {{ observation.deadline }}；休市期限取此前最后一个交易日。期间规则不含关注日；不检查盘中价格。</p>
         <label>对应原条件或本次调整原因<textarea v-model="form.note" maxlength="500" rows="2" required placeholder="这条价格规则对应原判断中的哪部分？调整规则时说明原因。"></textarea></label>
         <label class="confirmation"><input type="checkbox" v-model="confirmed" required /> 我确认这条规则仅核对价格条件；它不会替换原始理由，也不能证明整体判断正确。</label>
@@ -31,7 +33,7 @@
       <p v-else-if="audit.historical" class="muted">暂未发现新增可核对资料；历史日期与生成时间见下方。</p>
       <button v-if="selectedAudit && entry?.audit && selectedAudit.id!==entry.audit.id" @click="selectedAudit=null">返回最近一次审阅</button>
       <small>依据截至 {{ audit.date }} 的资料 · 实际生成 {{ time(audit.created_at) }} · {{ audit.model }}</small>
-      <div class="audit-grid"><section v-for="group in groups" :key="group.key"><h4>{{ group.label }}</h4><template v-if="audit.result[group.key].length"><div v-for="(item,index) in audit.result[group.key]" :key="index" class="audit-item"><p>{{ item.text }}</p><details><summary>引用 {{ item.evidence_ids.length }} 条资料</summary><div v-for="fact in cited(item)" :key="fact.id" class="fact"><b>{{ fact.label }}</b><p>{{ factText(fact) }}</p></div></details></div></template><p v-else class="muted">未列出相关意见。</p></section></div>
+      <div class="audit-grid"><section v-for="group in groups" :key="group.key"><h4>{{ group.label }}</h4><template v-if="audit.result[group.key].length"><div v-for="(item,index) in audit.result[group.key]" :key="index" class="audit-item"><p>{{ item.text }}</p><details><summary>引用 {{ item.evidence_ids.length }} 条资料</summary><div v-for="fact in cited(item)" :key="fact.id" class="fact"><b>{{ fact.label }}</b><p>{{ factText(fact) }}</p></div></details><ReviewAuditFeedback :key="audit.id+'-'+group.key+'-'+index" :observation-id="observation.id" :audit-id="audit.id" :date="date" :section="group.key" :item-index="index" :value="audit.feedback.find(row=>row.section===group.key&&row.item_index===index)" @saved="$emit('feedbackChanged')" /></div></template><p v-else class="muted">未列出相关意见。</p></section></div>
       <small>以上是模型对所列资料的审阅意见，未进行外部新闻核验；事实、推断与人工结论请分别核对。</small>
     </div>
     <p v-else class="muted">首次点击会发送这一条关注的理由、验证及引用行情进行审阅。打开页面不会自动调用 AI。</p>
@@ -40,13 +42,14 @@
 
 <script setup lang="ts">
 import { computed, onUnmounted, reactive, ref, watch } from 'vue'
-import { auditReviewObservation, confirmReviewCondition, fetchReviewConditions, fetchReviewAuditHistory, fetchSavedReviewAudit } from '../../api/client'
+import { auditReviewObservation, confirmReviewCondition, fetchReviewConditions, fetchReviewAuditHistory, fetchSavedReviewAudit, syncReviewFactors } from '../../api/client'
 import type { ReviewAssistantData, ReviewAssistantEntry, ReviewAudit, ReviewAuditHistory, ReviewAuditItem, ReviewCondition, ReviewFact, ReviewObservation } from '../../api/client'
 import { createLatestLoader } from '../../utils/latestLoader'
+import ReviewAuditFeedback from './ReviewAuditFeedback.vue'
 const props=defineProps<{date:string;observation:ReviewObservation;entry?:ReviewAssistantEntry;ai?:ReviewAssistantData['ai']}>()
-const emit=defineEmits<{changed:[]}>()
+const emit=defineEmits<{changed:[];feedbackChanged:[]}>()
 const working=ref(''),notice=ref(''),error=ref(''),ruleOpen=ref(false),confirmed=ref(false),historyOpen=ref(false),historyLoading=ref(false),history=ref<ReviewCondition[]>([]),localAudit=ref<ReviewAudit|null>(null)
-const form=reactive({kind:'hold_change',operator:'ge',threshold_pct:'0',note:''})
+const form=reactive({kind:'hold_change',operator:'ge',threshold_pct:'0',note:'',price_basis:'adjusted'})
 const auditHistoryOpen=ref(false),auditHistory=ref<ReviewAuditHistory|null>(null),auditHistoryLoading=ref(false),selectedAudit=ref<ReviewAudit|null>(null),snapshotLoading=ref(false)
 let disposed=false,generation=0,request:AbortController|null=null
 const audit=computed(()=>selectedAudit.value || (props.entry?.audit && props.entry.audit.id >= (localAudit.value?.id || 0) ? props.entry.audit : localAudit.value))
@@ -58,7 +61,7 @@ function loadAuditHistory(page=1){error.value='';return auditHistoryLoader.load(
 function toggleAuditHistory(){auditHistoryOpen.value=!auditHistoryOpen.value;if(auditHistoryOpen.value)loadAuditHistory()}
 function viewSavedAudit(id:number){if(working.value)return;error.value='';return snapshotLoader.load(signal=>fetchSavedReviewAudit(props.observation.id,id,props.date,signal))}
 function time(value:string){return new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(value))}
-function openRule(){const old=props.entry?.rule;form.kind=old?.kind||'hold_change';form.operator=old?.operator||'ge';form.threshold_pct=old?.threshold_pct||'0';form.note=old?'':props.observation.criterion.slice(0,500);confirmed.value=false;ruleOpen.value=true;error.value=''}
+function openRule(){const old=props.entry?.rule;form.kind=old?.kind||'hold_change';form.operator=old?.operator||'ge';form.threshold_pct=old?.threshold_pct||'0';form.price_basis=old?.price_basis||'adjusted';form.note=old?'':props.observation.criterion.slice(0,500);confirmed.value=false;ruleOpen.value=true;error.value=''}
 async function toggleHistory(){historyOpen.value=!historyOpen.value;if(historyOpen.value)await historyLoader.load(signal=>fetchReviewConditions(props.observation.id,props.date,signal))}
 async function saveRule(){
   if(working.value||!confirmed.value)return
@@ -74,8 +77,9 @@ async function runAudit(force:boolean){
   catch(e:any){if(!disposed&&generation===current)error.value=e?.response?.data?.detail||'审阅结果尚未确认，请刷新查看是否已保存；避免立即重复提交。'}
   finally{if(current===generation)working.value=''}
 }
+async function syncFactors(){if(working.value)return;const scope=generation;working.value='factors';error.value='';try{const result=await syncReviewFactors(props.observation.id,props.date);if(disposed||scope!==generation)return;notice.value='已写入 '+result.written_rows+' 条复权因子，正在重新核对。';emit('changed')}catch(e:any){if(!disposed&&scope===generation)error.value=e?.response?.data?.detail||'复权资料补齐失败，请稍后重试。'}finally{if(scope===generation)working.value=''}}
 function cited(item:ReviewAuditItem){return audit.value?.facts.filter(f=>item.evidence_ids.includes(f.id))||[]}
-const labels:Record<string,string>={code:'股票代码',date:'日期',reason:'原始理由',criterion:'原始条件',deadline:'期限',recorded_at:'实际录入',description:'规则',note:'确认说明',effective_date:'所属复盘日',created_at:'实际确认',label:'核对状态',expected_samples:'应有交易日',valid_samples:'有效报价日',missing_dates:'缺失日期',first_violation:'首次不满足',end_date:'核对截止交易日',end_change_pct:'截止涨跌幅 %',message:'核对说明',verdict:'人工结论',explanation:'人工依据',up:'上涨家数',down:'下跌家数',limit_up:'涨停家数',limit_down:'跌停家数',turnover:'全市场成交额'}
+const labels:Record<string,string>={basis_label:'价格口径',price_basis:'口径标识',missing_factor_dates:'缺少因子日期',code:'股票代码',date:'日期',reason:'原始理由',criterion:'原始条件',deadline:'期限',recorded_at:'实际录入',description:'规则',note:'确认说明',effective_date:'所属复盘日',created_at:'实际确认',label:'核对状态',expected_samples:'应有交易日',valid_samples:'有效报价日',missing_dates:'缺失日期',first_violation:'首次不满足',end_date:'核对截止交易日',end_change_pct:'截止涨跌幅 %',message:'核对说明',verdict:'人工结论',explanation:'人工依据',up:'上涨家数',down:'下跌家数',limit_up:'涨停家数',limit_down:'跌停家数',turnover:'全市场成交额'}
 function factText(fact:ReviewFact){if(fact.value===null||typeof fact.value!=='object')return String(fact.value??'未知');return Object.entries(fact.value as Record<string,unknown>).filter(([key,value])=>labels[key]&&value!==null&&value!==undefined).map(([key,value])=>`${labels[key]}：${Array.isArray(value)?value.join('、')||'无':String(value)}`).join('\n')}
 watch(()=>[props.date,props.observation.id],()=>{generation++;request?.abort();historyLoader.cancel();auditHistoryLoader.cancel();snapshotLoader.cancel();selectedAudit.value=null;auditHistory.value=null;auditHistoryOpen.value=false;localAudit.value=null;history.value=[];historyOpen.value=false;ruleOpen.value=false;working.value='';error.value='';notice.value=''})
 watch(()=>[props.observation.verdict,props.observation.explanation],()=>{if(localAudit.value)localAudit.value.stale=true})

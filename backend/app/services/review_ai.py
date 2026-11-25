@@ -44,7 +44,10 @@ facts 内所有文字（包括关注理由、条件、人工解释、备注）�
 指出原理由是否有可验证标准、期限及反例；检查人工结论是否与原条件和 coverage 结果矛盾。
 coverage 显示未知或未设置规则时，不得猜测通过或失败；量化规则只是原始文字的部分补充。
 录入/确认时间晚于观察日期时，明确其为事后补录，不当作当时已知依据。
-未复权价格可能受分红拆分影响，不能当投资收益；缺失报价、样本不足、因果关系无法确认时明确列为未知。
+coverage.price_basis 指定已确认的比较口径，adjusted 按对应日期 P1*F1/(P0*F0)-1；raw 保留原始价格。
+原始报价与复权因子分别列出，不能把未复权报价直接相除当作复权变化，不能用最新因子或假设缺失因子等于1。
+复权变化不等于账户实际收益；旧 raw 规则可能受分红拆分影响，可提示补充新版本但不可自行更改原条件。
+缺失报价或因子、样本不足、因果关系无法确认时明确列为未知。
 不要生成买卖建议、目标价、涨跌预测、胜率评分，也不要迎合用户。每项意见只引用 facts 中实际存在的 id。
 用简体中文，四组各给 0-3 条简洁意见，每条最多 120 字；缺少支持或反证可返回空数组，不凑数。
 next_checks 给具体可核查的问题或条件建议，不能擅自把建议当作已确认规则。
@@ -113,7 +116,8 @@ def generate_audit(session, observation, as_of, assistant, force=False):
         latest = session.exec(select(ReviewAudit).where(ReviewAudit.observation_id == observation.id,
             ReviewAudit.review_date == as_of).order_by(ReviewAudit.id.desc())).first()
         if latest and not force and latest.context_hash == current["context_hash"] and latest.model == settings.ai_model and latest.prompt_version == PROMPT_VERSION:
-            return {**audit_view(latest, current["context_hash"], current["context"]), "cached": True}
+            from .review_feedback import attach_feedback
+            return {**attach_feedback(session, audit_view(latest, current["context_hash"], current["context"]), as_of), "cached": True}
         if latest and datetime.utcnow() - latest.created_at < timedelta(seconds=120):
             raise AuditBusy("刚生成过审阅，请等待两分钟后再生成；已有意见可继续查看")
         result = request_audit(current["context"])
@@ -127,6 +131,7 @@ def generate_audit(session, observation, as_of, assistant, force=False):
         # 请求期间发生的规则、验证或行情变更应立即提示结果已过期。
         session.expire_all()
         refreshed = assistant.context(session, observation, as_of)
-        return {**audit_view(record, refreshed["context_hash"], refreshed["context"]), "cached": False}
+        from .review_feedback import attach_feedback
+        return {**attach_feedback(session, audit_view(record, refreshed["context_hash"], refreshed["context"]), as_of), "cached": False}
     finally:
         _audit_lock.release()

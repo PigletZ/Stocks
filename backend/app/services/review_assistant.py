@@ -15,8 +15,9 @@ from ..models import (MarketDailyStat, ReviewAudit, ReviewCondition, ReviewObser
 from .etf_service import EtfService
 from .review_workbench import today_shanghai
 from .review_records import PENDING, chunks, latest_records, observation_query
+from .price_basis import load_stock_factors, price_change
 
-PROMPT_VERSION = 1
+PROMPT_VERSION = 2
 STATE_LABELS = {"not_configured": "未设置量化条件", "pending": "仍在观察期",
                 "met": "量化条件已满足", "not_met": "量化条件未满足", "unknown": "数据不足，暂不判断"}
 
@@ -26,6 +27,7 @@ class ConditionSpec(BaseModel):
     kind: Literal["end_change", "hold_change"]
     operator: Literal["ge", "le"]
     threshold_pct: Decimal = Field(ge=-100, le=1000, max_digits=8, decimal_places=4)
+    price_basis: Literal['raw', 'adjusted'] = 'raw'
     note: str = Field(min_length=1, max_length=500)
 
     @field_validator("note")
@@ -61,7 +63,8 @@ def condition_view(rule):
     return {"id": rule.id, "effective_date": rule.effective_date.isoformat(), "kind": rule.kind,
             "operator": rule.operator, "threshold_pct": rule.threshold_pct, "note": rule.note,
             "created_at": iso_time(rule.created_at),
-            "description": f"{wording}较关注日收盘涨跌幅{comparison} {rule.threshold_pct}%"}
+            "price_basis": rule.price_basis, "basis_label": '复权区间价格变化' if rule.price_basis == 'adjusted' else '原始收盘价变化（旧口径）',
+            "description": f"{wording}较关注日的{'复权区间价格变化' if rule.price_basis == 'adjusted' else '原始收盘价变化'}{comparison} {rule.threshold_pct}%"}
 
 
 def save_condition(session, observation, body, commit=True):
@@ -72,7 +75,7 @@ def save_condition(session, observation, body, commit=True):
     if observation.deadline <= observation.observation_date:
         raise ValueError("自动价格核对需要至少一个关注日之后的交易日，请使用有后续期限的关注记录")
     rule = ReviewCondition(observation_id=observation.id, effective_date=body.effective_date,
-                           kind=body.kind, operator=body.operator, threshold_pct=str(body.threshold_pct), note=body.note)
+                           kind=body.kind, operator=body.operator, threshold_pct=str(body.threshold_pct), price_basis=body.price_basis, note=body.note)
     session.add(rule)
     if commit:
         session.commit()
@@ -103,6 +106,7 @@ class ReviewAssistant:
                 if usable_price(close):
                     loaded["prices"].setdefault(code, {})[day] = close
         loaded["market"] = session.exec(select(MarketDailyStat).where(MarketDailyStat.stat_date == as_of)).first() if ids else None
+        loaded['factors'] = load_stock_factors(session, [row.stock_code for row in observations], min(row.observation_date for row in observations), as_of) if observations else {}
         calendar_cache = {}
         def cached_calendar(start, end):
             key = (start, end)
@@ -136,36 +140,45 @@ class ReviewAssistant:
                       if observation.observation_date <= day <= end}
         calendar = (_loaded["calendar"] if _loaded else self.calendar)(observation.observation_date, end)
         days = sorted(d for d in calendar[0] if observation.observation_date < d <= end) if calendar else []
-        missing = [d.isoformat() for d in days if d not in prices]
+        required_days = days[-1:] if rule and rule.kind == 'end_change' else days
+        missing = [d.isoformat() for d in required_days if d not in prices]
         base = prices.get(observation.observation_date)
+        factors = _loaded['factors'] if _loaded is not None else load_stock_factors(session, [observation.stock_code], observation.observation_date, end)
+        basis = rule.price_basis if rule else 'adjusted'
+        def change(day):
+            return price_change(base, prices.get(day), factors.get((observation.stock_code, observation.observation_date)), factors.get((observation.stock_code, day)), basis)
+        factor_dates = [observation.observation_date]+required_days
+        missing_factors = [str(day) for day in factor_dates if day in prices and (observation.stock_code, day) not in factors]
         evaluation = {"status": "not_configured", "label": STATE_LABELS["not_configured"],
-                      "expected_samples": len(days) if calendar else None,
-                      "valid_samples": sum(d in prices for d in days) if calendar else None,
+                      "expected_samples": len(required_days) if calendar else None,
+                      "valid_samples": sum(change(d) is not None for d in required_days) if calendar else None,
+                      "price_basis": basis, "basis_label": '复权区间价格变化' if basis == 'adjusted' else '原始收盘价变化（旧口径）',
+                      "missing_factor_dates": missing_factors if basis == 'adjusted' else [],
                       "missing_dates": missing, "first_violation": None, "end_date": days[-1].isoformat() if days else None,
                       "end_change_pct": None, "message": "自由文本不会自动转换为已确认规则。"}
-        if days and base and days[-1] in prices:
-            evaluation["end_change_pct"] = float((Decimal(str(prices[days[-1]]))/Decimal(str(base))-1)*100)
+        if days and change(days[-1]) is not None:
+            evaluation["end_change_pct"] = float(change(days[-1]))
         if rule:
-            status, message = "unknown", "缺少完整官方日历或关注日有效收盘价；不能用缺失数据判定条件。"
-            if calendar and base and observation.observation_date in calendar[0]:
+            status, message = "unknown", "缺少完整官方日历、关注日收盘价或所需复权因子；不能用缺失数据判定条件。"
+            if calendar and base and observation.observation_date in calendar[0] and (basis == 'raw' or (observation.stock_code, observation.observation_date) in factors):
                 threshold = Decimal(rule.threshold_pct)
                 def matches(day):
-                    change = (Decimal(str(prices[day])) / Decimal(str(base)) - 1) * 100
-                    return change >= threshold if rule.operator == "ge" else change <= threshold
-                failures = [d for d in days if d in prices and not matches(d)]
+                    value = change(day)
+                    return value >= threshold if rule.operator == "ge" else value <= threshold
+                failures = [d for d in days if change(d) is not None and not matches(d)]
                 if rule.kind == "hold_change" and failures:
                     status, message = "not_met", "已发现不满足已确认条件的收盘记录；其他缺失报价不改变这条事实。"
                     evaluation["first_violation"] = failures[0].isoformat()
-                elif rule.kind == "hold_change" and missing:
-                    message = "期间规则存在缺失报价，暂不能核验；不把缺失日期当作满足条件。"
+                elif rule.kind == "hold_change" and (missing or (basis == 'adjusted' and missing_factors)):
+                    message = "期间规则存在缺失报价或复权因子，暂不能核验；不把缺失日期当作满足条件。"
                 elif as_of < observation.deadline:
                     status, message = "pending", "观察期限尚未结束；当前结果不能提前当作最终通过。"
-                elif not days or (missing if rule.kind == "hold_change" else days[-1] not in prices):
-                    message = "期限内存在缺失报价或没有后续交易日，暂不能核验；不回退到其他日期。"
+                elif not days or (missing if rule.kind == "hold_change" else change(days[-1]) is None):
+                    message = "期限内缺少报价、复权因子或后续交易日，暂不能核验；不回退到其他日期。"
                 else:
                     passed = matches(days[-1]) if rule.kind == "end_change" else not failures
                     status = "met" if passed else "not_met"
-                    message = "按已确认的价格条件核对；价格未复权，分红拆分可能影响结果，不代表收益或判断整体正确。"
+                    message = "按已确认的价格口径核对；复权变化不是账户实际收益，旧口径的原始价格仍受分红拆分影响，结果不证明判断整体正确。"
                     if not passed:
                         evaluation["first_violation"] = days[-1].isoformat()
             evaluation.update(status=status, label=STATE_LABELS[status], message=message)
@@ -187,6 +200,9 @@ class ReviewAssistant:
         for day in sorted(selected_days):
             if day in prices:
                 facts.append({"id": f"quote-{day}", "label": f"{day} 未复权收盘价", "value": str(prices[day])})
+                factor = factors.get((observation.stock_code, day))
+                if factor is not None:
+                    facts.append({'id': f'factor-{day}', 'label': f'{day} Tushare 复权因子', 'value': factor})
         market = _loaded["market"] if _loaded is not None else session.exec(select(MarketDailyStat).where(MarketDailyStat.stat_date == as_of)).first()
         if market:
             facts.append({"id": "market", "label": "所选日市场背景（不用于证明个股因果）", "value": {
@@ -228,7 +244,12 @@ class ReviewAssistant:
             elif pending and evaluation["status"] == "unknown":
                 signals.append(("data", "info", "验证数据不足", evaluation["message"], str(evaluation["missing_dates"])))
             for kind, level, title, message, event in signals:
-                key = digest([observation.id, kind, rule["id"] if rule else None, event])
+                identity = [observation.id, kind, rule["id"] if rule else None, event]
+                if rule and rule['price_basis'] == 'adjusted':
+                    identity.append('adjusted')
+                    if kind == 'data':
+                        identity.append(evaluation['missing_factor_dates'])
+                key = digest(identity)
                 state = state_map.get(key)
                 hidden = bool(state and (state.snooze_until is None or as_of < state.snooze_until))
                 reminders.append({"key": key, "kind": kind, "level": level, "title": title, "message": message,
@@ -244,10 +265,11 @@ class ReviewAssistant:
         if page is not None:
             visible = visible[(page-1)*page_size:page*page_size]
         from .review_ai import ai_status
+        from .review_feedback import summary
         return {"date": as_of.isoformat(), "ai": ai_status(), "entries": entries, "reminders": visible,
                 "active_count": active_count, "scope_count": len(observations),
                 "pending_count": sum(value["verdict"] in PENDING for value in contexts.values()),
-                "page": page or 1, "page_size": page_size, "pages": pages, "total": total}
+                "page": page or 1, "page_size": page_size, "pages": pages, "total": total, 'feedback_summary': summary(session, as_of)}
 
 
 def audit_view(audit, context_hash, current_context=None):
@@ -265,7 +287,11 @@ def audit_view(audit, context_hash, current_context=None):
                            ("observation", "关注资料有变化")):
             if before.get(key) != after.get(key):
                 changes.append(label)
+        if any(key.startswith('factor-') and before.get(key) != value for key, value in after.items()):
+            changes.append('复权因子已补齐或更新')
+        if audit.prompt_version != PROMPT_VERSION:
+            changes.append('审阅口径已升级，旧意见保留原始依据')
     return {"id": audit.id, "date": str(audit.review_date), "created_at": iso_time(audit.created_at),
             "model": audit.model, "stale": audit.context_hash != context_hash or audit.prompt_version != PROMPT_VERSION,
             "historical": historical, "changes": changes,
-            "result": json.loads(audit.result_json), "facts": original["facts"]}
+            "result": json.loads(audit.result_json), "facts": original["facts"], 'feedback': []}

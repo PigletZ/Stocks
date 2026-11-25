@@ -302,6 +302,18 @@ class EtfService:
                                   lambda: self._get_tushare_pro().fund_daily(trade_date=date_str),
                                   normalize, allow_empty=True)
 
+    def _fetch_etf_factors_for_date(self, target_date: date) -> pd.DataFrame:
+        from .price_basis import fetch_daily_factors, normalize_factors
+        key = 'factor-'+target_date.strftime('%Y%m%d')
+        cached = self._frame_cache.get(key)
+        def normalize(frame):
+            result = normalize_factors(frame, day=target_date)
+            if cached and len(result) < len(cached[1])*.95:
+                raise ValueError('Incomplete ETF adjustment factors')
+            return result
+        return self._cached_frame(key, f'ETF 复权因子 {target_date}', get_preferences().etf_daily_cache_seconds,
+            lambda: fetch_daily_factors(self._get_tushare_pro(), 'fund_adj', target_date), normalize, allow_empty=True)
+
     def _get_etf_list_with_cache(self) -> pd.DataFrame:
         """基础资料缓存 1 小时；上游故障时保留成功获取的旧资料。"""
         return self._fetch_etf_basic_list()
@@ -486,6 +498,14 @@ class EtfService:
 
         code_name_map = dict(zip(df_basic["code"], df_basic["name"]))
         allowed_codes = set(df_basic["code"].astype(str).tolist())
+        from .price_basis import price_change
+        factor_map = {}
+        for day in daily_map:
+            try:
+                frame = self._fetch_etf_factors_for_date(day)
+                factor_map[day] = {row['code']: row['adj_factor'] for row in frame.to_dict('records')}
+            except RuntimeError:
+                factor_map[day] = {}
 
         def _build_ranking(
             end_date: date,
@@ -509,7 +529,13 @@ class EtfService:
             start_quotes = df_start.set_index("code")[["close"]].rename(columns={"close": "close_start"})
             merged = end_quotes.join(start_quotes, how="inner")
             merged = merged[(merged["close_end"] > 0) & (merged["close_start"] > 0)]
-            merged["gain"] = (merged["close_end"] / merged["close_start"] - 1) * 100
+            if merged.empty:
+                return []
+            def adjusted_gain(row):
+                value = price_change(row['close_start'], row['close_end'], factor_map.get(start_date,{}).get(str(row.name)), factor_map.get(end_date,{}).get(str(row.name)))
+                return float(value) if value is not None else float('nan')
+            merged['gain'] = merged.apply(adjusted_gain, axis=1)
+            merged = merged.dropna(subset=['gain'])
             merged = merged.sort_values("gain", ascending=False)
 
             result = []
@@ -532,6 +558,7 @@ class EtfService:
             "target_date": d.isoformat(),
             "effective_date": effective_date.isoformat(),
             "two_day": _build_ranking(effective_date, two_base, min_amount_wan=min_amount),
+            'price_basis': 'adjusted',
             "five_day": _build_ranking(effective_date, five_base),
             "ten_day": _build_ranking(effective_date, ten_base),
             "twenty_day": _build_ranking(effective_date, twenty_base),

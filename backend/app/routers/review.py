@@ -17,6 +17,8 @@ from ..services.review_assistant import ConditionInput, ConditionSpec, ReviewAss
 from ..services.review_ai import AuditBusy, AuditUnavailable, generate_audit
 from ..services import review_tracking
 from ..services.etf_service import EtfService
+from ..services.price_basis import StockFactorService
+from ..services import review_feedback
 
 router = APIRouter()
 
@@ -150,7 +152,57 @@ def get_saved_audit(observation_id: int, audit_id: int, target: date = Query(...
     if record is None or record.observation_id != observation.id or record.review_date > target:
         raise HTTPException(404, "截至所选日期没有这份审阅记录")
     current = ReviewAssistant().context(session, observation, target)
-    return audit_view(record, current["context_hash"], current["context"])
+    return review_feedback.attach_feedback(session, audit_view(record, current["context_hash"], current["context"]), target)
+
+
+def _feedback_audit(session, observation_id, audit_id, target):
+    _observation(session, observation_id)
+    record = session.get(ReviewAudit, audit_id)
+    if record is None or record.observation_id != observation_id or record.review_date > target:
+        raise HTTPException(404, "截至所选日期没有这份审阅记录")
+    return record
+
+
+@router.post("/observations/{observation_id}/audits/{audit_id}/feedback")
+def submit_audit_feedback(observation_id: int, audit_id: int, body: review_feedback.FeedbackInput, session: Session = Depends(get_session)):
+    target = _review_date(session, body.date)
+    audit = _feedback_audit(session, observation_id, audit_id, target)
+    try:
+        return review_feedback.save_feedback(session, audit, body)
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from None
+
+
+@router.get("/observations/{observation_id}/audits/{audit_id}/feedback")
+def audit_feedback_history(observation_id: int, audit_id: int, target: date = Query(..., alias="date"),
+                          section: review_feedback.SECTIONS = Query(...), item_index: int = Query(..., ge=0, le=3),
+                          page: int = Query(1, ge=1), session: Session = Depends(get_session)):
+    target = _review_date(session, target)
+    audit = _feedback_audit(session, observation_id, audit_id, target)
+    return review_feedback.history(session, audit, target, section, item_index, page)
+
+
+@router.post("/observations/{observation_id}/factors")
+def sync_observation_factors(observation_id: int, target: date = Query(..., alias="date"), session: Session = Depends(get_session)):
+    observation = _observation(session, observation_id)
+    target = _review_date(session, target)
+    if target < observation.observation_date:
+        raise HTTPException(400, "补齐日期不能早于关注日期")
+    end = min(target, observation.deadline)
+    try:
+        source = StockFactorService()
+        count = source.sync_code(session, observation.stock_code, observation.observation_date, end)
+        if target > end:
+            count += source.sync_code(session, observation.stock_code, target, target)
+        if not count:
+            raise HTTPException(503, "未取得有效复权因子，已有数据已保留")
+        return {'written_rows': count}
+    except ValueError as error:
+        session.rollback()
+        raise HTTPException(400, str(error)) from None
+    except RuntimeError:
+        session.rollback()
+        raise HTTPException(503, "复权因子暂时无法补齐，已有数据已保留，请稍后重试") from None
 
 
 @router.post("/observations/{observation_id}/conditions")

@@ -11,7 +11,7 @@
         <label>03 / 关注理由<textarea v-model="form.reason" maxlength="2000" rows="3" required placeholder="记录当时看到的事实，以及你为何认为值得继续观察。"></textarea></label>
         <label v-if="preset==='custom'">怎样验证<textarea v-model="form.criterion" maxlength="2000" rows="2" required placeholder="哪些事实出现时算符合预期？哪些情况需要重新评估？"></textarea></label>
         <label v-else class="confirmation"><input type="checkbox" v-model="ruleConfirmed" /> 同时保存上面这条价格规则，用于自动核对；原始理由继续保留。未勾选时只记录文字条件。</label>
-        <small>记录保留实际保存时间。历史补录不代表事前已作出判断；价格未复权，分红拆分可能影响比较。</small>
+        <small>记录保留实际保存时间。新价格模板使用对应日期因子的复权变化；原始收盘与旧规则口径分别保留。</small>
         <div class="actions"><button class="primary" type="submit" :disabled="saving">{{ saving?'保存中…':ruleConfirmed&&preset!=='custom'?'保存关注与已确认规则':'保存关注' }}</button><button type="button" @click="showForm=false">暂时收起</button></div>
       </fieldset>
     </form>
@@ -22,12 +22,12 @@
       <template v-if="detail&&!detailLoading">
         <header class="detail-title"><button class="stock-link" @click="$emit('open',detail.observation.code,detail.observation.name)">{{ detail.observation.name }} {{ detail.observation.code }}</button><span>{{ detail.observation.verdict }}</span><small>{{ detail.observation.observation_date }} → {{ detail.observation.deadline }}</small></header>
         <p><b>原始理由</b> {{ detail.observation.reason }}</p><p><b>原始条件</b> {{ detail.observation.criterion }}</p>
-        <div class="facts"><span>关注日收盘 {{ detail.observation.base_close??'—' }}</span><span>所选日收盘 {{ detail.observation.close??'—' }}</span><span>未复权价格变化 {{ detail.observation.price_change==null?'—':detail.observation.price_change+'%' }}</span></div>
+        <div class="facts"><span>关注日原始收盘 {{ detail.observation.base_close??'—' }}</span><span>所选日原始收盘 {{ detail.observation.close??'—' }}</span><span>复权区间变化 {{ detail.observation.adjusted_price_change==null?'—':detail.observation.adjusted_price_change+'%' }}</span><span>原始收盘变化 {{ detail.observation.price_change==null?'—':detail.observation.price_change+'%' }}</span></div>
         <small>实际录入 {{ time(detail.observation.created_at) }}<template v-if="detail.observation.verified_on"> · 验证所属 {{ detail.observation.verified_on }} · 实际保存 {{ time(detail.observation.verified_at!) }}</template></small>
         <p v-if="detail.observation.explanation"><b>人工验证依据</b> {{ detail.observation.explanation }}</p>
         <button @click="openVerification">记录 {{ date }} 的验证</button>
         <form v-if="verificationOpen" class="verify-form" @submit.prevent="verify"><fieldset :disabled="verifying"><select v-model="verdict"><option>符合预期</option><option>不符合预期</option><option>继续观察</option></select><textarea v-model="explanation" maxlength="2000" rows="3" required placeholder="对照原始条件，说明哪些事实支持你的判断。"></textarea><div class="actions"><button class="primary" :disabled="verifying">{{ verifying?'保存中…':'保存人工验证' }}</button><button type="button" @click="verificationOpen=false">收起</button></div></fieldset></form>
-        <ReviewObservationAssistant :key="detail.observation.id" :date="date" :observation="detail.observation" :entry="detail.entry" :ai="detail.ai" @changed="$emit('saved')" />
+        <ReviewObservationAssistant :key="detail.observation.id" :date="date" :observation="detail.observation" :entry="detail.entry" :ai="detail.ai" @changed="$emit('saved')" @feedback-changed="$emit('feedbackChanged')" />
       </template>
     </div>
     <p v-if="listLoading" class="empty">正在读取关注清单…</p>
@@ -50,7 +50,7 @@ import { createLatestLoader } from '../../utils/latestLoader'
 import ReviewStockSearch from './ReviewStockSearch.vue'
 import ReviewObservationAssistant from './ReviewObservationAssistant.vue'
 const props=defineProps<{date:string;revision:number}>()
-const emit=defineEmits<{saved:[];open:[code:string,name:string]}>()
+const emit=defineEmits<{saved:[];open:[code:string,name:string];feedbackChanged:[]}>()
 const showForm=ref(false),saving=ref(false),notice=ref(''),error=ref(''),preset=ref('custom'),operator=ref<'ge'|'le'>('ge'),threshold=ref('0'),ruleConfirmed=ref(false)
 const form=reactive({code:'',reason:'',criterion:'',deadline:''})
 const deadlineOptions=ref<{days:number;date:string}[]>([]),calendarLoading=ref(false),deadlineError=ref(''),duration=ref<number|string>('manual')
@@ -61,7 +61,7 @@ let disposed=false,generation=0,detailGeneration=0,searchTimer:ReturnType<typeof
 const listLoader=createLatestLoader<ReviewObservationPage>({resolve:value=>{pageData.value=value;page.value=value.page},reject:()=>{pageData.value=null;error.value='关注清单读取失败，请重试。'},pending:value=>listLoading.value=value})
 const detailLoader=createLatestLoader<ReviewObservationDetail>({resolve:value=>detail.value=value,reject:(e:any)=>{detail.value=null;detailError.value=e?.response?.data?.detail||'关注详情读取失败，请重试。'},pending:value=>detailLoading.value=value})
 const calendarLoader=createLatestLoader<{date:string;options:{days:number;date:string}[]}>({resolve:value=>{deadlineOptions.value=value.options;if(!form.deadline){duration.value=5;form.deadline=value.options.find(row=>row.days===5)?.date||''}},reject:()=>{deadlineOptions.value=[];duration.value='manual';deadlineError.value='交易日期暂未确认，请手动选择验证日期，或稍后更新日历。'},pending:value=>calendarLoading.value=value})
-const templateText=computed(()=>(preset.value==='hold_change'?'关注后至验证期限内，每个交易日收盘':'验证期限日（休市时取此前最后一个交易日）收盘')+'较关注日收盘涨跌幅'+(operator.value==='ge'?'不低于 ':'不高于 ')+threshold.value+'%。')
+const templateText=computed(()=>(preset.value==='hold_change'?'关注后至验证期限内，每个交易日收盘':'验证期限日（休市时取此前最后一个交易日）收盘')+'较关注日的复权区间价格变化'+(operator.value==='ge'?'不低于 ':'不高于 ')+threshold.value+'%。')
 function message(e:any,fallback:string){return typeof e?.response?.data?.detail==='string'?e.response.data.detail:fallback}
 function time(value:string|null){return value?new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(value)):'未知'}
 function loadList(){error.value='';if(searchTimer)clearTimeout(searchTimer);return listLoader.load(signal=>fetchReviewObservations(props.date,status.value,search.value.trim(),page.value,signal))}
@@ -87,7 +87,7 @@ async function create(){
   if(saving.value)return
   if(!/^\d{6}$/.test(form.code)){error.value='请搜索并选择股票，或输入完整六位股票代码。';return}
   const current=generation,date=props.date
-  const condition:ReviewConditionSpec|undefined=ruleConfirmed.value&&preset.value!=='custom'?{kind:preset.value as ReviewConditionSpec['kind'],operator:operator.value,threshold_pct:String(threshold.value),note:'录入时人工确认：'+templateText.value}:undefined
+  const condition:ReviewConditionSpec|undefined=ruleConfirmed.value&&preset.value!=='custom'?{kind:preset.value as ReviewConditionSpec['kind'],operator:operator.value,threshold_pct:String(threshold.value),price_basis:'adjusted',note:'录入时人工确认：'+templateText.value}:undefined
   const body={...form,observation_date:date,condition}
   saving.value=true;notice.value='';error.value=''
   try{const result=await createReviewObservation(body);if(disposed||generation!==current)return;showForm.value=false;form.code='';form.reason='';form.criterion=preset.value==='custom'?'':templateText.value;ruleConfirmed.value=false;notice.value=condition?'关注与已确认规则已一起保存。':'关注已保存。';selectedId.value=result.id;detail.value=null;verificationOpen.value=false;emit('saved');await nextTick();detailSection.value?.scrollIntoView({behavior:'smooth',block:'start'})}

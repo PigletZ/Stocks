@@ -11,6 +11,9 @@
     </div>
 
     <p v-if="error" class="error-message" role="alert">{{ error }}</p>
+    <p class="date-note">区间涨幅按对应交易日的复权因子计算，原始最新价保留；不是账户实际收益。缺少报价或因子的样本不参与排名。</p>
+    <p v-if="warnings.length" class="error-message">{{ warnings.join('；') }}</p>
+    <p class="date-note" v-if="coverage">复权可比样本：<span v-for="(value,key) in coverage" :key="key">{{ key }}日 {{ value.valid }}/{{ value.total }}　</span></p>
     <div class="rankings-grid">
       <section class="ranking-panel">
         <h3>五日涨幅榜</h3>
@@ -159,6 +162,7 @@ const tenDay = ref<TopGainerItem[]>([])
 const twentyDay = ref<TopGainerItem[]>([])
 const loading = ref(false)
 const error = ref('')
+const warnings=ref<string[]>([]),coverage=ref<Record<string,{valid:number;total:number}>|null>(null)
 
 async function loadData() {
   loading.value = true
@@ -166,6 +170,7 @@ async function loadData() {
   try {
     const res = await fetchTopGainers(selectedDate.value)
     effectiveDate.value = res.effective_date
+    warnings.value=res.warnings||[];coverage.value=res.factor_coverage||null
     fiveDay.value = res.five_day
     tenDay.value = res.ten_day
     twentyDay.value = res.twenty_day
