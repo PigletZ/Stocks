@@ -96,6 +96,22 @@ class ShortTermTests(unittest.TestCase):
         result=scan_intraday(self.session,client,self.etf,self.store,self.now)
         self.assertEqual(result['status'],'skipped');client.query.assert_not_called()
 
+    def test_unknown_calendar_is_not_a_confirmed_holiday_or_success(self):
+        client=Mock();now=datetime(2026,11,19,2,1,tzinfo=timezone.utc)
+        with patch.object(self.etf,'_fetch_trade_dates',side_effect=RuntimeError('calendar unavailable')):
+            result=scan_intraday(self.session,client,self.etf,self.store,now)
+        self.assertEqual(result['status'],'unknown');self.assertEqual(result['source_errors'],1)
+        client.query.assert_not_called()
+
+    def test_real_minute_source_failure_is_recorded_separately_from_missing_samples(self):
+        self.calendar();now=datetime(2026,11,19,2,1,tzinfo=timezone.utc)
+        self.session.add(Stock(code='600519',name='fixture',exchange='SH'))
+        self.session.add(WatchlistItem(stock_code='600519',created_at=datetime(2026,11,18)));self.session.commit()
+        client=Mock();client.query.side_effect=RuntimeError('source HTTP 502')
+        report=scan_intraday(self.session,client,self.etf,self.store,now)
+        self.assertEqual(report['source_errors'],1)
+        self.assertEqual(report['fresh'],0)
+
     def test_stale_source_is_not_used_to_resolve_an_existing_event(self):
         self.calendar();now=datetime(2026,11,19,2,1,tzinfo=timezone.utc)
         self.session.add(Stock(code='600519',name='fixture',exchange='SH'))

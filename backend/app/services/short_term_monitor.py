@@ -54,6 +54,18 @@ def scan_intraday(session, client=None, etf=None, store=None, now=None):
     store,etf,now=store or RuntimeStore(),etf or EtfService(),now or utc_now()
     phase,expected=minute_phase(etf,now)
     config=preferences(store)
+    if config.enabled and phase=='unknown':
+        try:
+            day=now.astimezone(SH).date()
+            etf._fetch_trade_dates(day,day)  # 缺少年度缓存时只取官方日历，不推测工作日。
+            phase,expected=minute_phase(etf,now)
+        except (RuntimeError,ValueError,TypeError) as error:
+            report={'status':'unknown','phase':'unknown','date':str(now.astimezone(SH).date()),
+                'checked_at':now.isoformat(),'written':0,'source_errors':1,'errors':[redact(str(error))],
+                'message':'官方交易日历暂不可用，未启动分钟取数或判定正常。'}
+            store.write('short-term-intraday',report);return report
+        if phase=='unknown':
+            return {'status':'unknown','phase':phase,'written':0,'message':'官方交易日历仍待确认，未启动分钟取数。'}
     if not config.enabled or phase not in ('trading','closing'):
         return {'status':'skipped','phase':phase,'message':'监控已关闭或当前不在连续交易时段。','written':0}
     day=now.astimezone(SH).date()
@@ -61,7 +73,7 @@ def scan_intraday(session, client=None, etf=None, store=None, now=None):
     selected=codes[:config.max_stocks]
     identities={row.code:row.exchange for row in session.exec(select(Stock).where(Stock.code.in_(selected))).all()}
     client=client or TushareClient(settings.tushare_token)
-    valid_codes=set();errors=[];written=0;latest=None
+    valid_codes=set();errors=[];source_errors=0;written=0;latest=None
     for offset in range(0,len(selected),50):
         batch=selected[offset:offset+50]
         requested={code+'.'+identities[code] for code in batch if code in identities}
@@ -80,7 +92,7 @@ def scan_intraday(session, client=None, etf=None, store=None, now=None):
                 latest=max(latest,row['bar_time']) if latest else row['bar_time']
             if len(fresh)<len(requested):errors.append('部分分钟样本缺失或超过两分钟，未使用旧行情触发新事件。')
         except (RuntimeError,ValueError,TypeError) as error:
-            session.rollback();errors.append(redact(str(error)))
+            session.rollback();errors.append(redact(str(error)));source_errors+=1
             break  # 权限、限流或故障时不继续压测接口。
     evaluations=[];move_ready=0;amount_ready=0
     start=datetime.combine(day,time.min)-timedelta(hours=8)
@@ -97,7 +109,7 @@ def scan_intraday(session, client=None, etf=None, store=None, now=None):
     report={'status':'ready' if not errors and len(valid_codes)==len(selected) else 'partial', 'date':str(day),'phase':phase,
         'checked_at':now.isoformat(),'latest_bar_time':iso(latest),'pool':len(codes),'monitored':len(selected),
         'fresh':len(valid_codes),'move_ready':move_ready,'amount_ready':amount_ready,'limited':len(codes)-len(selected),
-        'errors':errors[:3],'written':written,'message':'5 分钟变化需连续 6 条分钟；放量需连续 21 条分钟。午休和缺失不拼接，不自动回补无权限的历史分钟。'}
+        'errors':errors[:3],'source_errors':source_errors,'written':written,'message':'5 分钟变化需连续 6 条分钟；放量需连续 21 条分钟。午休和缺失不拼接，不自动回补无权限的历史分钟。'}
     store.write('short-term-intraday',report)
     return report
 
@@ -125,7 +137,8 @@ def run(mode='auto', history_days=1):
     with Session(engine) as session:
         if mode in ('auto','intraday'):
             report=scan_intraday(session)
-            record_progress(succeeded=int(report.get('status')=='ready'),deferred=int(report.get('status')=='partial'),
+            record_progress(succeeded=int(report.get('status')=='ready'),failed=report.get('source_errors',0),
+                deferred=int(report.get('status') in ('partial','unknown') and not report.get('source_errors')),
                 skipped=int(report.get('status')=='skipped'),confirmed_skip=report.get('status')=='skipped',
                 written_rows=report.get('written',0),message=report.get('message','分钟扫描已结束'))
         if mode in ('auto','close'):
