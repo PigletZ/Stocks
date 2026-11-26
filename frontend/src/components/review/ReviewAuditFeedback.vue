@@ -19,7 +19,7 @@ const reuse=ref(false),corrections=ref<ReviewCorrectionHistory|null>(null),corre
 const local=ref<ReviewAuditFeedback|null>(null),editing=ref(false),rating=ref<ReviewAuditFeedback['rating']>('helpful'),comment=ref(''),saving=ref(false),error=ref(''),notice=ref(''),history=ref<ReviewFeedbackHistory|null>(null),historyLoading=ref(false)
 let generation=0,disposed=false
 const labels={helpful:'有帮助',misunderstood:'理解有误',insufficient:'证据不足'}
-const current=computed(()=>props.value && props.value.id>=(local.value?.id||0)?props.value:local.value)
+const current=computed(()=>{if(!local.value)return props.value;if(!props.value)return local.value;if(props.value.id!==local.value.id)return props.value.id>local.value.id?props.value:local.value;return (props.value.correction_id||0)>(local.value.correction_id||0)?props.value:local.value})
 const loader=createLatestLoader<ReviewFeedbackHistory>({resolve:value=>history.value=value,reject:()=>error.value='反馈记录读取失败，请重试。',pending:value=>historyLoading.value=value})
 function time(value:string){return new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(value))}
 const correctionLoader=createLatestLoader<ReviewCorrectionHistory>({resolve:value=>corrections.value=value,reject:()=>error.value='纠正说明历史读取失败，请重试。',pending:value=>correctionLoading.value=value})
