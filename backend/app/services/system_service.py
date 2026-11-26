@@ -74,7 +74,9 @@ class SystemService:
             if item['action'] != 'daily' and item['status'] in ('error', 'interrupted', 'partial', 'unknown'):
                 alerts.append(self._alert('maintenance-'+item['action'], 'warning', item['name']+'结果待核验',
                     item['message'], '查看维护任务的失败或待发布明细，确认后可重新发起'))
-        if diagnostics["status"] != "ok":
+        if not settings.tushare_token:
+            alerts.append(self._alert('source','error','行情凭据尚未配置','无法取得 Tushare 资料','核对服务器配置后检查数据源'))
+        elif diagnostics['fresh'] and diagnostics["status"] != "ok":
             checks = [check for check in diagnostics["checks"] if check.get("status") == "error"]
             detail = "；".join(f"{check['label']}：{check['message']}" for check in checks[:2]) if diagnostics["fresh"] else "尚无最近 10 分钟内的有效诊断结果"
             alerts.append(self._alert("source", "error" if diagnostics["status"] == "error" else "warning", "数据源需要检查", detail or "部分接口未返回可核验的样本", "点击“检查数据源”；单接口可用不代表所有模块均已同步"))

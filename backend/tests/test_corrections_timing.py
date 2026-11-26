@@ -177,5 +177,20 @@ class TimingTests(unittest.TestCase):
             with self.assertRaises(TushareError):source.fetch_market_stats_for_date(self.now.date(),strict=True)
             with self.assertRaises(TushareError):source.fetch_index_for_date('000001','fixture',self.now.date(),strict=True)
 
+    def test_expired_manual_diagnostics_are_informational_not_a_new_source_failure(self):
+        self.store.write('diagnostics',{'checked_at':(self.now-timedelta(hours=1)).isoformat(),
+            'checks':[{'key':'calendar','label':'fixture','status':'ok','message':'sample passed'}]})
+        with patch('app.services.runtime_state.settings.tushare_token','test-token'):
+            result=self.service.get_status(self.session)
+        self.assertFalse(any(alert['key']=='source' for alert in result['alerts']))
+        self.assertEqual(result['diagnostics']['status'],'unknown')
+
+    def test_fresh_diagnostic_failure_still_requires_attention(self):
+        self.store.write('diagnostics',{'checked_at':self.now.isoformat(),
+            'checks':[{'key':'calendar','label':'fixture','status':'error','message':'HTTP 502'}]})
+        with patch('app.services.runtime_state.settings.tushare_token','test-token'):
+            result=self.service.get_status(self.session)
+        self.assertTrue(any(alert['key']=='source' and alert['severity']=='error' for alert in result['alerts']))
+
 
 if __name__=='__main__':unittest.main()
