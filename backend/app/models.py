@@ -256,6 +256,46 @@ class ReviewAuditFeedback(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class ShortTermMinute(SQLModel, table=True):
+    __tablename__ = 'short_term_minute'
+    __table_args__ = (UniqueConstraint('stock_code', 'bar_time', name='uix_short_minute'),)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    stock_code: str = Field(index=True)
+    bar_time: datetime = Field(index=True)  # UTC；只保存已闭合的真实分钟
+    close: str
+    amount: str  # 元
+
+
+class ShortTermEvent(SQLModel, table=True):
+    __tablename__ = 'short_term_event'
+    id: Optional[int] = Field(default=None, primary_key=True)
+    event_key: str = Field(index=True)
+    business_date: date = Field(index=True)
+    mode: str = Field(index=True)  # intraday / close
+    category: str  # market / sector / stock
+    subject: str = Field(index=True)
+    kind: str
+    title: str
+    level: int  # 1=关注 2=明显异动
+    cycle: int = 1
+    active: bool = True
+    notify: bool = True
+    notify_after: datetime = Field(default_factory=datetime.utcnow)
+    snapshot_json: str
+    detected_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ShortTermEventState(SQLModel, table=True):
+    __tablename__ = 'short_term_event_state'
+    id: Optional[int] = Field(default=None, primary_key=True)
+    event_key: str = Field(index=True)
+    cycle: int
+    level: int
+    action: str  # read / ignore / reset
+    effective_date: date = Field(index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Holding(SQLModel, table=True):
     """手动录入的持仓（无台账记录的股票；有台账的以 FIFO 计算为准）"""
 

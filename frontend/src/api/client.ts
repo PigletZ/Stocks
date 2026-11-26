@@ -1222,7 +1222,7 @@ export interface PriceCoverage {
   windows: { days: number; base_date: string | null; valid: number; total: number; missing_factors: number; coverage_pct: number | null }[]
 }
 export interface MaintenanceJob {
-  action: 'daily' | 'factors' | 'backup'; name: string; description: string; status: SystemState; message: string
+  action: 'daily' | 'factors' | 'backup' | 'short_term'; name: string; description: string; status: SystemState; message: string
   requested_at: string | null; next_allowed_at: string | null; can_start: boolean; record: JobRunRecord | null
 }
 export async function fetchMaintenanceJobs(signal?: AbortSignal): Promise<MaintenanceJob[]> {
@@ -1230,6 +1230,42 @@ export async function fetchMaintenanceJobs(signal?: AbortSignal): Promise<Mainte
 }
 export async function startMaintenance(action: MaintenanceJob['action']): Promise<{accepted: boolean; job: MaintenanceJob}> {
   return (await api.post('/system/maintenance/' + action, undefined, {timeout: 15000})).data
+}
+
+export interface ShortTermSettings {
+  enabled:boolean; max_stocks:number; move_5m_pct:string; critical_5m_pct:string
+  minute_amount_multiple:string; minute_amount_floor:string; daily_move_pct:string; daily_amount_multiple:string
+}
+export interface ShortTermEvent {
+  id:number; key:string; date:string; mode:'intraday'|'close'; category:string; subject:string; kind:string; title:string
+  level:number; cycle:number; active:boolean; detected_at:string; unread:boolean; ignored:boolean; cooling:boolean; notify:boolean
+  snapshot:{actual:string; baseline:string; unit:string; rule:string; observed_at:string; source:string; name:string|null;
+    scope_note:string; observations:{id:number;date:string;reason:string}[]}
+}
+export interface ShortTermEvents {
+  date:string; mode:string; counts:{active:number;unread:number;total:number}; items:ShortTermEvent[]; total:number;page:number;pages:number
+}
+export interface ShortTermStatus {
+  date:string;mode:string;phase:string;settings:ShortTermSettings;job:MaintenanceJob;note:string
+  capability:unknown
+  coverage:null|{status:string;date?:string;checked_at:string;latest_bar_time?:string;pool?:number;monitored?:number;fresh?:number;
+    move_ready?:number;amount_ready?:number;limited?:number;market_ready?:boolean;baseline_days?:number;sector_types_ready?:number;
+    stock_pool?:number;price_pairs?:number;message:string;errors?:string[]}
+}
+export async function fetchShortTermStatus(date:string,mode:string,signal?:AbortSignal):Promise<ShortTermStatus>{
+  return (await api.get('/short-term/status',{params:{date,mode},signal})).data
+}
+export async function fetchShortTermEvents(params:{date:string;mode:string;category?:string;include_resolved?:boolean;unread_only?:boolean;include_ignored?:boolean;page?:number},signal?:AbortSignal):Promise<ShortTermEvents>{
+  return (await api.get('/short-term/events',{params,signal})).data
+}
+export async function fetchShortTermUnread(date:string,mode:string,signal?:AbortSignal):Promise<{unread:number}>{
+  return (await api.get('/short-term/unread',{params:{date,mode},signal})).data
+}
+export async function scanShortTerm():Promise<{accepted:boolean;job:MaintenanceJob}>{return (await api.post('/short-term/scan',undefined,{timeout:15000})).data}
+export async function setShortTermState(id:number,date:string,action:'read'|'ignore'|'reset'):Promise<void>{await api.put(`/short-term/events/${id}/state`,{date,action})}
+export async function saveShortTermSettings(body:ShortTermSettings):Promise<ShortTermSettings>{return (await api.put('/short-term/settings',body)).data}
+export async function fetchShortTermHistory(id:number,date:string,page:number,signal?:AbortSignal):Promise<{items:ShortTermEvent[];page:number;pages:number;total:number}>{
+  return (await api.get(`/short-term/events/${id}/history`,{params:{date,page},signal})).data
 }
 
 export async function fetchSystemStatus(signal?: AbortSignal): Promise<SystemStatus> {
