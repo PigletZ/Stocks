@@ -940,7 +940,8 @@ class OverviewService:
         info: Dict[str, dict] = {}
         try:
             for st, label in (("I", "industry"), ("N", "concept")):
-                df = self._get_tushare_pro().ths_index(type=st, exchange='A')
+                # 沿用既有请求范围，避免与历史缓存的覆盖基准不一致。
+                df = self._get_tushare_pro().ths_index(type=st, src='exp')
                 if df.empty or not {'ts_code', 'name'}.issubset(df.columns):
                     raise RuntimeError('行业或概念基础资料未齐全，暂不能核验板块行情')
                 for _, row in df.iterrows():
