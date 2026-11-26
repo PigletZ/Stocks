@@ -929,7 +929,7 @@ class OverviewService:
             }
         ).to_dict("records")
 
-    def _get_sector_index_info(self) -> Dict[str, dict]:
+    def _get_sector_index_info(self, strict=False) -> Dict[str, dict]:
         """获取同花顺指数代码到类型/名称的映射（I=行业，N=概念）。
 
         结果缓存在实例内存中，避免每次同步都重复请求 Tushare。
@@ -940,20 +940,23 @@ class OverviewService:
         info: Dict[str, dict] = {}
         try:
             for st, label in (("I", "industry"), ("N", "concept")):
-                df = self._get_tushare_pro().ths_index(type=st, src="exp")
+                df = self._get_tushare_pro().ths_index(type=st, exchange='A')
+                if df.empty or not {'ts_code', 'name'}.issubset(df.columns):
+                    raise RuntimeError('行业或概念基础资料未齐全，暂不能核验板块行情')
                 for _, row in df.iterrows():
                     code = str(row.get("ts_code", "")).strip()
                     name = str(row.get("name", "")).strip()
-                    if code:
+                    if code and name:
                         info[code] = {"type": label, "name": name}
         except Exception:
-            # 失败时返回空，由调用方处理
-            pass
+            if strict:
+                raise
+            return {}
 
         self._sector_index_info = info
         return info
 
-    def _fetch_sector_daily_from_tushare(self, target_date: date) -> Dict[str, List[dict]]:
+    def _fetch_sector_daily_from_tushare(self, target_date: date, strict=False) -> Dict[str, List[dict]]:
         """从 Tushare 拉取指定日期的同花顺行业/概念指数日线数据。
 
         Tushare ths_daily 未提供板块成交额，因此用成交量（vol，单位：手）作为替代字段。
@@ -961,13 +964,15 @@ class OverviewService:
         date_str = target_date.strftime("%Y%m%d")
         result: Dict[str, List[dict]] = {"industry": [], "concept": []}
         try:
-            info = self._get_sector_index_info()
+            info = self._get_sector_index_info(strict=True)
             if not info:
                 return result
 
             df = self._get_tushare_pro().ths_daily(trade_date=date_str)
             if df.empty:
                 return result
+            if not {'ts_code', 'trade_date', 'pct_change', 'vol'}.issubset(df.columns) or not df['trade_date'].astype(str).eq(date_str).all():
+                raise RuntimeError('板块行情日期或字段不完整，已保留已有缓存')
 
             for _, row in df.iterrows():
                 code = str(row.get("ts_code", "")).strip()
@@ -984,7 +989,9 @@ class OverviewService:
                     "volume": float(vol) if pd.notna(vol) else 0.0,
                 })
         except Exception:
-            pass
+            if strict:
+                raise
+            return {'industry': [], 'concept': []}
         return result
 
     def fetch_sector_ranking(self, sector_type: str = "industry", limit: int = 20) -> List[dict]:
@@ -1115,7 +1122,7 @@ class OverviewService:
         if session is None:
             return 0
 
-        data = self._fetch_sector_daily_from_tushare(target_date)
+        data = self._fetch_sector_daily_from_tushare(target_date, strict=True)
         rows = data.get(sector_type, [])
         if not rows:
             # 上游失败或未发布时，不能先删掉已有数据。

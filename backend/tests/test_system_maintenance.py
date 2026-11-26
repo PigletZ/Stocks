@@ -12,6 +12,9 @@ from app.models import StockAdjustmentFactor, StockDailyQuote
 from app.services.system_maintenance import (MaintenanceBusy, maintenance_status,
                                              start_maintenance, _launch_lock)
 from app.services.system_price_coverage import price_coverage
+from app.services.daily_sync import DailySyncService
+from app.models import SectorDaily
+from app.services.tushare_client import TushareError
 
 
 class MaintenanceTests(unittest.TestCase):
@@ -198,6 +201,57 @@ class PriceCoverageTests(unittest.TestCase):
         self.seed()
         reports = price_coverage(self.session, self.etf, None, self.day)
         self.assertTrue(all(row['status'] == 'unknown' for row in reports))
+
+
+class SectorFailureTests(unittest.TestCase):
+    setUp = fixtures.SystemTests.setUp
+
+    def test_failed_concept_metadata_cannot_cache_industry_only_result(self):
+        service = fixtures.OverviewService()
+        client = Mock()
+        industry = pd.DataFrame([{'ts_code': '881001.TI', 'name': 'industry'}])
+        concept = pd.DataFrame([{'ts_code': '885001.TI', 'name': 'concept'}])
+        client.ths_index.side_effect = [industry, TushareError('upstream failed')]
+        with patch.object(service, '_get_tushare_pro', return_value=client):
+            with self.assertRaises(TushareError):
+                service._get_sector_index_info(strict=True)
+            self.assertFalse(getattr(service, '_sector_index_info', {}))
+            client.ths_index.side_effect = [industry, concept]
+            self.assertEqual(len(service._get_sector_index_info(strict=True)), 2)
+
+    def test_strict_sync_keeps_existing_rows_and_reports_http_failure_as_failure(self):
+        day = self.now.date()
+        self.session.add(SectorDaily(sector_type='industry', sector_code='881001.TI',
+            sector_name='saved', trade_date=day, change_pct=1, volume=10))
+        self.session.commit()
+        service, client = fixtures.OverviewService(), Mock()
+        client.ths_daily.side_effect = TushareError('upstream HTTP 502')
+        with patch.object(service, '_get_tushare_pro', return_value=client), patch.object(
+                service, '_get_sector_index_info', return_value={'881001.TI': {'type':'industry', 'name':'saved'}}):
+            @fixtures.tracked_job('daily')
+            def execute():
+                DailySyncService._run(lambda: service.sync_sector_ranking_for_date(day, 'industry', self.session), 'sector', self.session)
+            execute()
+        result = self.store.read('job-daily')
+        self.assertEqual(result['failed'], 1)
+        self.assertEqual(result['deferred'], 0)
+        self.assertEqual(self.session.exec(select(SectorDaily.sector_name)).all(), ['saved'])
+
+    def test_true_empty_daily_response_remains_deferred_not_an_exception(self):
+        service, client = fixtures.OverviewService(), Mock()
+        client.ths_daily.return_value = pd.DataFrame()
+        with patch.object(service, '_get_tushare_pro', return_value=client), patch.object(
+                service, '_get_sector_index_info', return_value={'881001.TI': {'type':'industry', 'name':'saved'}}):
+            self.assertEqual(service.sync_sector_ranking_for_date(self.now.date(), 'industry', self.session), 0)
+
+    def test_wrong_date_daily_response_is_rejected_and_read_fallback_is_empty(self):
+        service, client = fixtures.OverviewService(), Mock()
+        client.ths_daily.return_value = pd.DataFrame([{'ts_code':'881001.TI', 'trade_date':'20261118', 'pct_change':1, 'vol':1}])
+        with patch.object(service, '_get_tushare_pro', return_value=client), patch.object(
+                service, '_get_sector_index_info', return_value={'881001.TI': {'type':'industry', 'name':'saved'}}):
+            with self.assertRaises(RuntimeError):
+                service.sync_sector_ranking_for_date(self.now.date(), 'industry', self.session)
+            self.assertEqual(service._fetch_sector_daily_from_tushare(self.now.date()), {'industry':[], 'concept':[]})
 
 
 if __name__ == '__main__':

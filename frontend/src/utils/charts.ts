@@ -8,4 +8,5 @@ use([BarChart, LineChart, RadarChart, AxisPointerComponent, GridComponent, Legen
   MarkLineComponent, RadarComponent, TitleComponent, TooltipComponent, CanvasRenderer])
 
 export { init } from 'echarts/core'
-export type { ECharts, EChartsOption, SeriesOption } from 'echarts'
+export type { EChartsType as ECharts } from 'echarts/core'
+export type { EChartsOption, SeriesOption } from 'echarts'
