@@ -46,7 +46,10 @@ def maintenance_status(action, store=None, now=None):
     receipt = store.read('maintenance-' + action)
     requested = _timestamp(receipt.get('requested_at')) if receipt else None
     started = _timestamp(record.get('started_at')) if record else None
-    current = record if record and (not requested or (started and started >= requested)) else None
+    finished = _timestamp(record.get('finished_at')) if record else None
+    # cron 可能稍早启动、在手动请求之后完成，避免把锁竞争后的真实完成误判为中断。
+    current = record if record and (not requested or (started and started >= requested)
+                                    or (finished and finished >= requested)) else None
     status, message = 'idle', '尚未发起维护；可按需要手动执行。'
     if current:
         status, message = current.get('status', 'unknown'), redact(current.get('message', ''))

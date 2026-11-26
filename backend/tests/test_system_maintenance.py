@@ -103,6 +103,17 @@ class MaintenanceTests(unittest.TestCase):
                 start_maintenance('backup', self.store, self.now, self.backend())
         self.assertIsNone(self.store.read('maintenance-backup'))
 
+    def test_cron_started_before_request_but_finished_after_is_not_interrupted(self):
+        self.store.write('maintenance-daily', {'requested_at': self.now.isoformat(), 'pid': 12345})
+        self.record(started=self.now-timedelta(seconds=1))
+        record = self.store.read('job-daily')
+        record['finished_at'] = (self.now+timedelta(seconds=1)).isoformat()
+        self.store.write('job-daily', record)
+        with patch('app.services.system_maintenance.process_alive', return_value=False):
+            result = maintenance_status('daily', self.store, self.now+timedelta(seconds=2))
+        self.assertEqual(result['status'], 'success')
+        self.assertIsNotNone(result['record'])
+
     def test_overlapping_launches_are_rejected(self):
         _launch_lock.acquire()
         try:
