@@ -5,8 +5,8 @@
     <div class="cards"><article v-for="job in jobs" :key="job.action">
       <div class="row"><h3>{{ job.name }}</h3><strong :class="job.status">{{ labels[job.status] || job.status }}</strong></div>
       <p>{{ job.description }}</p><p class="message">{{ job.message }}</p>
-      <template v-if="job.record"><p class="counts">成功 {{ job.record.succeeded }} · 失败 {{ job.record.failed }} · 待发布/核验 {{ job.record.deferred || 0 }} · 跳过 {{ job.record.skipped }}</p><small>写入 / 覆盖 {{ job.record.written_rows.toLocaleString() }} 条 · 更新 {{ time(job.record.updated_at || job.record.finished_at || job.record.started_at) }}</small>
-        <details v-if="job.record.errors?.length || job.record.deferred_items?.length || job.record.history?.length"><summary>执行明细与此前结果</summary><p v-for="(line,i) in job.record.errors || []" :key="'error'+i" class="error">{{ line }}</p><p v-for="(line,i) in job.record.deferred_items || []" :key="'pending'+i">{{ line }}</p><p v-for="run in job.record.history || []" :key="run.started_at"><small>{{ time(run.started_at) }} · {{ labels[run.status] || run.status }} · 失败 {{ run.failed }} / 待核验 {{ run.deferred || 0 }}</small></p></details>
+      <template v-if="job.record"><p class="counts">成功 {{ job.record.succeeded }} · 失败 {{ job.record.failed }} · 正常等候 {{ job.record.waiting || 0 }} · 逾期待核验 {{ job.record.deferred || 0 }} · 跳过 {{ job.record.skipped }}</p><small>写入 / 覆盖 {{ job.record.written_rows.toLocaleString() }} 条 · 更新 {{ time(job.record.updated_at || job.record.finished_at || job.record.started_at) }}</small>
+        <p v-if="job.record.waiting" class="message">预计核验 {{ time(job.record.waiting_until) }} · 正常等候 {{ job.record.waiting }} 项</p><details v-if="job.record.errors?.length || job.record.deferred_items?.length || job.record.waiting_items?.length || job.record.history?.length"><summary>执行明细与此前结果</summary><p v-for="(line,i) in job.record.errors || []" :key="'error'+i" class="error">{{ line }}</p><p v-for="line in job.record.waiting_items || []" :key="line">{{ line }}</p><p v-for="(line,i) in job.record.deferred_items || []" :key="'pending'+i">{{ line }}</p><p v-for="run in job.record.history || []" :key="run.started_at"><small>{{ time(run.started_at) }} · {{ labels[run.status] || run.status }} · 失败 {{ run.failed }} / 待核验 {{ run.deferred || 0 }}</small></p></details>
       </template>
       <button class="start" :disabled="!!submitting || !job.can_start" @click="start(job)">{{ submitting===job.action ? '正在提交…' : job.status==='queued' || job.status==='running' ? '正在后台执行' : job.next_allowed_at ? '稍后可再次执行' : job.name }}</button>
       <small v-if="job.requested_at">上次手动提交 {{ time(job.requested_at) }}</small>
@@ -19,7 +19,7 @@ import { fetchMaintenanceJobs, startMaintenance, type MaintenanceJob } from '../
 import { createLatestLoader } from '../../utils/latestLoader'
 const emit=defineEmits<{completed:[]}>()
 const jobs=ref<MaintenanceJob[]>([]),loading=ref(false),submitting=ref(''),error=ref(''),notice=ref('')
-const labels:Record<string,string>={idle:'按需执行',queued:'已提交',running:'运行中',success:'已完成',skipped:'已确认跳过',partial:'部分完成',unknown:'待核验',error:'失败',interrupted:'已中断'}
+const labels:Record<string,string>={idle:'按需执行',queued:'已提交',running:'运行中',success:'已完成',skipped:'已确认跳过',partial:'部分完成',unknown:'待核验',error:'失败',interrupted:'已中断',waiting:'正常等候发布'}
 let disposed=false,timer:ReturnType<typeof setTimeout>|undefined
 const waiting=new Set<string>()
 const active=(job:MaintenanceJob)=>['queued','running'].includes(job.status)
@@ -30,7 +30,7 @@ const loader=createLatestLoader<MaintenanceJob[]>({pending:value=>loading.value=
   if(completed)emit('completed')
 }})
 function time(value?:string|null){if(!value)return '—';return new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date(value))}
-function schedule(){if(timer)clearTimeout(timer);if(!disposed && (jobs.value.some(job=>active(job)||job.next_allowed_at)||error.value))timer=setTimeout(()=>{if(document.hidden)schedule();else refresh()},error.value?15000:3000)}
+function schedule(){if(timer)clearTimeout(timer);if(!disposed && (jobs.value.some(job=>active(job)||job.next_allowed_at||job.status==='waiting')||error.value))timer=setTimeout(()=>{if(document.hidden)schedule();else refresh()},error.value?15000:jobs.value.some(active)?3000:60000)}
 async function refresh(){error.value='';await loader.load(signal=>fetchMaintenanceJobs(signal));schedule()}
 async function start(job:MaintenanceJob){if(submitting.value || !job.can_start)return;submitting.value=job.action;notice.value='';error.value='';try{const result=await startMaintenance(job.action);if(disposed)return;if(result.accepted || active(result.job))waiting.add(job.action);jobs.value=jobs.value.map(row=>row.action===job.action?result.job:row);notice.value=result.accepted?'任务已提交；完成情况以执行记录为准。':'已复用正在执行或刚提交的任务，请查看执行状态。';await refresh()}catch(e:any){if(!disposed){error.value=typeof e?.response?.data?.detail==='string'?e.response.data.detail:'提交结果尚未确认，请刷新执行状态后再操作。';schedule()}}finally{if(!disposed)submitting.value=''}}
 onMounted(refresh)

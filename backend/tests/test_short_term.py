@@ -162,7 +162,7 @@ class ShortTermTests(unittest.TestCase):
         new=updated_crontab(old,Path('/workspace/backend'),Path('/workspace/backend/venv/bin/python'))
         self.assertIn('existing.py',new)
         self.assertEqual(new,updated_crontab(new,Path('/workspace/backend'),Path('/workspace/backend/venv/bin/python')))
-        self.assertIn('0 15 * * 1-5',new)
+        self.assertIn('0,1 15 * * 1-5',new)
 
 
 if __name__=='__main__':unittest.main()

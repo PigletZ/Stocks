@@ -182,6 +182,15 @@ def audit_feedback_history(observation_id: int, audit_id: int, target: date = Qu
     return review_feedback.history(session, audit, target, section, item_index, page)
 
 
+@router.get('/observations/{observation_id}/audits/{audit_id}/corrections')
+def correction_history(observation_id:int,audit_id:int,target:date=Query(...,alias='date'),
+    section:review_feedback.SECTIONS=Query(...),item_index:int=Query(...,ge=0,le=3),page:int=Query(1,ge=1),session:Session=Depends(get_session)):
+    from ..services.review_corrections import history
+    target=_review_date(session,target)
+    audit=_feedback_audit(session,observation_id,audit_id,target)
+    return history(session,audit.id,target,section,item_index,page)
+
+
 @router.post("/observations/{observation_id}/factors")
 def sync_observation_factors(observation_id: int, target: date = Query(..., alias="date"), session: Session = Depends(get_session)):
     observation = _observation(session, observation_id)

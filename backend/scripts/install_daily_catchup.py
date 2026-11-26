@@ -19,7 +19,7 @@ def updated_crontab(current, backend, python):
     if any(char in str(backend)+str(python) for char in ("\n", "\r", "%")):
         raise ValueError("任务路径包含不支持的 cron 字符")
     clean = re.sub(r"(?ms)^"+re.escape(BEGIN)+r"\n.*?^"+re.escape(END)+r"(?:\n|$)", "", current)
-    command = (f"30 18,20 * * 1-5 cd {shlex.quote(str(backend))} && bash scripts/run_throttled.sh "
+    command = (f"30 18,20,21,22,23 * * 1-5 cd {shlex.quote(str(backend))} && bash scripts/run_throttled.sh "
                f"{shlex.quote(str(python))} scripts/import_daily.py >> logs/import_daily.log 2>&1")
     return clean.rstrip()+"\n\n"+BEGIN+"\n"+command+"\n"+END+"\n"
 
@@ -39,7 +39,7 @@ def main():
         return
     RuntimeStore().write("cron-before-catchup", {"content": result.stdout, "saved_at": utc_now().isoformat()})
     subprocess.run(["crontab", "-"], input=revised, text=True, check=True)
-    print("已设置北京时间工作日 18:30 / 20:30 补齐计划，原任务保留")
+    print("已设置北京时间工作日 18:30 / 20:30 / 21:30 / 22:30 / 23:30 补齐计划，原任务保留")
 
 
 if __name__ == "__main__":

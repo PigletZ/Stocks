@@ -149,7 +149,7 @@ class OverviewService:
             return self.fetch_market_stats_for_date(prev_date)[0]
         return stats
 
-    def fetch_limit_stats_for_date(self, target_date: date) -> Optional[dict]:
+    def fetch_limit_stats_for_date(self, target_date: date, strict=False) -> Optional[dict]:
         """获取指定日期的涨停、跌停、炸板数量（使用 Tushare limit_list_d）。
 
         limit_list_d 在收盘后较晚才发布：返回空表或调用失败时表示"数据未就绪"，
@@ -160,12 +160,15 @@ class OverviewService:
             df = self._get_tushare_pro().limit_list_d(trade_date=date_str)
             if df is None or df.empty:
                 return None
+            if strict and (not {'trade_date','limit'}.issubset(df.columns) or not df['trade_date'].astype(str).eq(date_str).all()):
+                raise RuntimeError('涨跌停统计日期或字段不完整')
             return {
                 "limit_up": int((df["limit"] == "U").sum()),
                 "limit_down": int((df["limit"] == "D").sum()),
                 "opened_limit": int((df["limit"] == "Z").sum()),
             }
         except Exception:
+            if strict:raise
             return None
 
     def fetch_trade_dates(self, start: date, end: date) -> List[date]:
@@ -702,7 +705,7 @@ class OverviewService:
 
         return result
 
-    def fetch_index_for_date(self, code: str, name: str, target_date: date) -> Optional[dict]:
+    def fetch_index_for_date(self, code: str, name: str, target_date: date, strict=False) -> Optional[dict]:
         """获取单个指数在指定日期的行情（使用 Tushare index_daily）"""
         date_str = target_date.strftime("%Y%m%d")
         ts_code_map = {
@@ -718,6 +721,8 @@ class OverviewService:
         try:
             df = self._get_tushare_pro().index_daily(ts_code=ts_code, start_date=date_str, end_date=date_str)
             if not df.empty:
+                if strict and ('trade_date' not in df or not df['trade_date'].astype(str).eq(date_str).all()):
+                    raise RuntimeError('指数行情日期不匹配')
                 row = df.iloc[0]
                 return {
                     "code": code,
@@ -732,10 +737,10 @@ class OverviewService:
                     "amount": float(row["amount"]),
                 }
         except Exception:
-            pass
+            if strict:raise
         return None
 
-    def fetch_market_stats_for_date(self, target_date: date) -> Tuple[dict, bool]:
+    def fetch_market_stats_for_date(self, target_date: date, strict=False) -> Tuple[dict, bool]:
         """获取指定日期的市场统计（涨跌家数、成交额、涨跌停，全部来自 Tushare）。
 
         返回 (stats, authoritative)。authoritative=False 表示数据未就绪
@@ -759,12 +764,14 @@ class OverviewService:
             df = self._get_tushare_pro().daily(trade_date=date_str)
             if df.empty:
                 return empty_result, False
+            if strict and (not {'trade_date','pct_chg','amount'}.issubset(df.columns) or not df['trade_date'].astype(str).eq(date_str).all()):
+                raise RuntimeError('市场行情日期或字段不匹配')
             up = int((df["pct_chg"] > 0).sum())
             down = int((df["pct_chg"] < 0).sum())
             flat = int((df["pct_chg"] == 0).sum())
             # amount 单位为千元，转成元
             total_turnover = float(df["amount"].sum()) * 1000
-            limit_stats = self.fetch_limit_stats_for_date(target_date)
+            limit_stats = self.fetch_limit_stats_for_date(target_date,strict=strict)
             if limit_stats is None:
                 return {
                     "up": up,
@@ -785,6 +792,7 @@ class OverviewService:
                 **limit_stats,
             }, True
         except Exception:
+            if strict:raise
             return empty_result, False
 
     def fetch_daily_overview(self, target_date: date, session) -> dict:

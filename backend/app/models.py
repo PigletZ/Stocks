@@ -256,6 +256,20 @@ class ReviewAuditFeedback(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class ReviewCorrection(SQLModel, table=True):
+    __tablename__='review_correction'
+    id: Optional[int] = Field(default=None,primary_key=True)
+    observation_id:int = Field(index=True,foreign_key='review_observation.id')
+    audit_id:int = Field(index=True,foreign_key='review_audit.id')
+    feedback_id:int = Field(foreign_key='review_audit_feedback.id')
+    section:str
+    item_index:int
+    effective_date:date = Field(index=True)
+    active:bool
+    note:str
+    created_at:datetime = Field(default_factory=datetime.utcnow)
+
+
 class ShortTermMinute(SQLModel, table=True):
     __tablename__ = 'short_term_minute'
     __table_args__ = (UniqueConstraint('stock_code', 'bar_time', name='uix_short_minute'),)

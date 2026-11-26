@@ -64,7 +64,7 @@ class SystemService:
             if table["status"] in {"empty", "stale", "partial"}:
                 alerts.append(self._alert(table["table"], "error" if table["status"] == "empty" else "warning", f"{table['label']}需要关注", table["message"], f"影响：{table['impact']}；检查对应同步任务和数据源"))
         for job in jobs:
-            if job["status"] not in {"success", "running", "skipped"}:
+            if job["status"] not in {"success", "running", "skipped",'waiting'}:
                 alerts.append(self._alert(f"job-{job['key']}", "error" if job["status"] in {"error", "interrupted"} else "warning", f"{job['name']}：执行结果待处理", job["message"], "展开任务查看执行记录与日志摘要"))
         for comparison in comparisons:
             if comparison['status'] in ('partial', 'stale'):

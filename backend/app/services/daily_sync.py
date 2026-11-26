@@ -9,6 +9,7 @@ from .dashboard_service import DashboardService
 from .job_monitor import record_progress
 from .overview_service import OverviewService
 from .review_service import ReviewService
+from .collection_timing import record_missing
 
 
 class DailySyncService:
@@ -31,7 +32,7 @@ class DailySyncService:
                 if count and count >= reference*.85:
                     record_progress(skipped=1, confirmed_skip=True, unit="数据集")
                     continue
-                self._run(lambda: self.overview.sync_sector_ranking_for_date(day, kind, session), f"{day} {kind} 板块", session)
+                self._run(lambda: self.overview.sync_sector_ranking_for_date(day, kind, session), f"{day} {kind} 板块", session,day)
 
             stat = session.exec(select(MarketDailyStat).where(MarketDailyStat.stat_date == day)).first()
             counts = dict(session.exec(select(LimitUpDaily.limit_type, func.count()).where(LimitUpDaily.trade_date == day).group_by(LimitUpDaily.limit_type)).all())
@@ -40,12 +41,12 @@ class DailySyncService:
             if limit_complete:
                 record_progress(skipped=1, confirmed_skip=True, unit="数据集")
             else:
-                self._run(lambda: self.review.sync_limit_daily(day, session, strict=True), f"{day} 涨跌停明细", session)
+                self._run(lambda: self.review.sync_limit_daily(day, session, strict=True), f"{day} 涨跌停明细", session,day)
             dragon = session.exec(select(DragonTigerDaily.id).where(DragonTigerDaily.trade_date == day).limit(1)).first()
             if dragon:
                 record_progress(skipped=1, confirmed_skip=True, unit="数据集")
             else:
-                self._run(lambda: self.review.sync_dragon_tiger_daily(day, session, strict=True), f"{day} 龙虎榜", session)
+                self._run(lambda: self.review.sync_dragon_tiger_daily(day, session, strict=True), f"{day} 龙虎榜", session,day)
 
     def _sync_market(self, day, session):
         stat = session.exec(select(MarketDailyStat).where(MarketDailyStat.stat_date == day)).first()
@@ -60,17 +61,18 @@ class DailySyncService:
             record_progress(succeeded=2, written_rows=result["indices_count"]+1, unit="数据集")
         except ValueError:
             session.rollback()
-            record_progress(deferred=2, message=f"{day} 统计或指数尚未齐备，保留旧数据，等待补齐", unit="数据集")
+            record_missing(day,f"{day} 统计或指数尚未齐备，保留旧数据，等待补齐",2)
         except Exception as error:
             session.rollback()
             record_progress(failed=1, message=f"{day} 统计/指数同步失败：{error}", unit="数据集")
 
     @staticmethod
-    def _run(sync, label, session):
+    def _run(sync, label, session,day=None):
         try:
             count = sync()
-            record_progress(succeeded=int(count > 0), deferred=int(count == 0), written_rows=count,
+            record_progress(succeeded=int(count > 0), deferred=int(count == 0 and day is None), written_rows=count,
                             message=f"{label}：{'已写入' if count else '未返回有效数据，等待后续补齐'}", unit="数据集")
+            if count==0 and day is not None:record_missing(day,f'{label}：未返回有效数据，等待补齐')
         except Exception as error:
             session.rollback()
             record_progress(failed=1, message=f"{label}：{error}", unit="数据集")

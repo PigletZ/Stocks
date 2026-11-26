@@ -18,7 +18,7 @@ def updated_crontab(current,backend,python):
     clean=re.sub(r'(?ms)^'+re.escape(BEGIN)+r'\n.*?^'+re.escape(END)+r'(?:\n|$)','',current)
     command=f'cd {shlex.quote(str(backend))} && {shlex.quote(str(python))} scripts/scan_short_term.py'
     plans=[('31-59 9 * * 1-5','intraday'),('* 10,13,14 * * 1-5','intraday'),('0-30 11 * * 1-5','intraday'),
-           ('0 15 * * 1-5','intraday'),('35 16,18,20,21 * * 1-5','close')]
+           ('0,1 15 * * 1-5','intraday'),('35 16,18,20,21,22,23 * * 1-5','close')]
     lines=[f'{plan} {command} --mode {mode} >> logs/short_term.log 2>&1' for plan,mode in plans]
     return clean.rstrip()+'\n\n'+BEGIN+'\n'+'\n'.join(lines)+'\n'+END+'\n'
 

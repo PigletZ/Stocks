@@ -30,6 +30,7 @@ import EmotionHistory from '../components/review/EmotionHistory.vue'
 import PigletStockDetailPopup from '../components/strategy/PigletStockDetailPopup.vue'
 const route=useRoute(),data=ref<ReviewWorkbenchData|null>(null),loading=ref(false),error=ref('')
 const assistantRevision=ref(0),feedbackRevision=ref(0),observationsRef=ref<InstanceType<typeof ReviewObservations>|null>(null)
+watch(()=>[data.value?.date,route.query.observation],async()=>{const id=Number(route.query.observation);if(Number.isSafeInteger(id)&&id>0&&data.value){await nextTick();observationsRef.value?.focus(id)}})
 const emotionOpen=ref(route.query.section === 'emotion' || route.hash === '#emotion')
 const emotionSection=ref<HTMLDetailsElement|null>(null),emotionRange=ref(29)
 const outcome=ref(''),boards=ref(0),expanded=ref(false),observationSection=ref<HTMLElement|null>(null)

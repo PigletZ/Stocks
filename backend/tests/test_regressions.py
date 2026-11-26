@@ -203,7 +203,7 @@ class RegressionTests(unittest.TestCase):
         original='SHELL=/bin/bash\n0 16 * * 1-5 python other_task.py\n'
         updated=updated_crontab(original,'/project/backend','/project/backend/venv/bin/python')
         self.assertTrue(updated.startswith(original.rstrip()))
-        self.assertIn('30 18,20 * * 1-5',updated)
+        self.assertIn('30 18,20,21,22,23 * * 1-5',updated)
         self.assertEqual(updated_crontab(updated,'/project/backend','/project/backend/venv/bin/python'),updated)
         self.assertEqual(updated.count(BEGIN),1)
         with self.assertRaises(RuntimeError):updated_crontab(original+BEGIN+'\n','/project/backend','python')

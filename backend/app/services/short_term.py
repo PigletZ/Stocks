@@ -119,6 +119,8 @@ def minute_phase(etf=None, now=None):
     clock = now.time().replace(tzinfo=None)
     if time(9, 31) <= clock < time(11, 31) or time(13, 1) <= clock < time(15, 1):
         return 'trading', now.replace(second=0, microsecond=0)
+    if time(15,1)<=clock<time(15,2):
+        return 'closing',now.replace(hour=15,minute=0,second=0,microsecond=0)
     return ('before_open' if clock < time(9, 31) else 'break' if clock < time(13, 1) else 'closed'), None
 
 

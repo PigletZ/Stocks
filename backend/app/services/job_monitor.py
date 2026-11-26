@@ -2,6 +2,7 @@
 import os
 import threading
 import time
+from datetime import datetime
 from contextvars import ContextVar
 from functools import wraps
 
@@ -14,6 +15,14 @@ except ImportError:  # 本地 Windows 验证；生产 Linux 使用跨进程 floc
 
 _active_run = ContextVar("stocks_job_run", default=None)
 _local_locks = {}
+
+
+def waiting_expired(record,now=None):
+    try:
+        deadline=datetime.fromisoformat(record['waiting_until'])
+        return not deadline.tzinfo or (now or utc_now())>=deadline
+    except (KeyError,ValueError,TypeError):
+        return True
 
 
 def process_identity(pid):
@@ -39,7 +48,7 @@ class JobRun:
         self.key = key
         self.store = store or RuntimeStore()
         previous = self.store.read(f"job-{key}") or {}
-        fields = ("started_at", "finished_at", "status", "succeeded", "failed", "deferred", "skipped", "written_rows", "message")
+        fields = ("started_at", "finished_at", "status", "succeeded", "failed", "deferred", "waiting", "skipped", "written_rows", "message")
         history = previous.get("history", [])
         if not isinstance(history, list):
             history = []
@@ -48,7 +57,7 @@ class JobRun:
         self.data = {"key": key, "run_id": utc_now().isoformat(), "started_at": utc_now().isoformat(),
                      "finished_at": None, "updated_at": utc_now().isoformat(), "status": "running",
                      "pid": os.getpid(), "process_identity": process_identity(os.getpid()),
-                     "succeeded": 0, "failed": 0, "deferred": 0, "skipped": 0, "written_rows": 0,
+                     "succeeded": 0, "failed": 0, "deferred": 0, "waiting":0,"waiting_until":None,"waiting_items":[],"skipped": 0, "written_rows": 0,
                      "unit": "项", "message": "正在执行", "confirmed_skip": False, "errors": [], "deferred_items": [], "history": history[:5]}
         self._last_write = 0
 
@@ -58,8 +67,8 @@ class JobRun:
             self.store.write(f"job-{self.key}", self.data)
             self._last_write = time.monotonic()
 
-    def record(self, succeeded=0, failed=0, deferred=0, skipped=0, written_rows=0, message=None, unit=None, confirmed_skip=False):
-        for name, value in (("succeeded", succeeded), ("failed", failed), ("deferred", deferred), ("skipped", skipped), ("written_rows", written_rows)):
+    def record(self, succeeded=0, failed=0, deferred=0, skipped=0, written_rows=0, message=None, unit=None, confirmed_skip=False,waiting=0,waiting_until=None):
+        for name, value in (("succeeded", succeeded), ("failed", failed), ("deferred", deferred),('waiting',waiting), ("skipped", skipped), ("written_rows", written_rows)):
             self.data[name] += value
         if message:
             self.data["message"] = redact(message)[:250]
@@ -67,6 +76,9 @@ class JobRun:
                 self.data["errors"] = (self.data["errors"] + [redact(message)[:250]])[-5:]
             if deferred:
                 self.data["deferred_items"] = (self.data["deferred_items"] + [redact(message)[:250]])[-5:]
+            if waiting:
+                self.data['waiting_items']=(self.data['waiting_items']+[redact(message)[:250]])[-5:]
+        if waiting_until:self.data['waiting_until']=waiting_until
         if unit:
             self.data["unit"] = unit
         if confirmed_skip:
@@ -80,6 +92,7 @@ class JobRun:
                                "error" if self.data["failed"] else
                                "partial" if self.data["deferred"] and self.data["succeeded"] else
                                "unknown" if self.data["deferred"] else
+                               'waiting' if self.data['waiting'] else
                                "success" if self.data["succeeded"] else
                                "skipped" if self.data["skipped"] and self.data["confirmed_skip"] else "unknown")
         self.data["finished_at"] = utc_now().isoformat()
@@ -92,6 +105,8 @@ class JobRun:
             self.data["message"] = "所需数据已存在或已确认无需执行，本次跳过"
         if self.data["status"] == "partial":
             self.data["message"] = f"已完成 {self.data['succeeded']} 项，失败 {self.data['failed']} 项，待发布/核验 {self.data['deferred']} 项；详情见执行记录"
+        if self.data['status']=='waiting':
+            self.data['message']=f"已完成可核验部分，{self.data['waiting']} 项仍在正常发布等候窗口；详情见预计核验时间"
         self.write(force=True)
 
 

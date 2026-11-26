@@ -17,7 +17,7 @@ from .review_workbench import today_shanghai
 from .review_records import PENDING, chunks, latest_records, observation_query
 from .price_basis import load_stock_factors, price_change
 
-PROMPT_VERSION = 2
+PROMPT_VERSION = 3
 STATE_LABELS = {"not_configured": "未设置量化条件", "pending": "仍在观察期",
                 "met": "量化条件已满足", "not_met": "量化条件未满足", "unknown": "数据不足，暂不判断"}
 
@@ -107,6 +107,8 @@ class ReviewAssistant:
                     loaded["prices"].setdefault(code, {})[day] = close
         loaded["market"] = session.exec(select(MarketDailyStat).where(MarketDailyStat.stat_date == as_of)).first() if ids else None
         loaded['factors'] = load_stock_factors(session, [row.stock_code for row in observations], min(row.observation_date for row in observations), as_of) if observations else {}
+        from .review_corrections import facts_for_observations
+        loaded['corrections']=facts_for_observations(session,ids,as_of)
         calendar_cache = {}
         def cached_calendar(start, end):
             key = (start, end)
@@ -203,6 +205,8 @@ class ReviewAssistant:
                 factor = factors.get((observation.stock_code, day))
                 if factor is not None:
                     facts.append({'id': f'factor-{day}', 'label': f'{day} Tushare 复权因子', 'value': factor})
+        from .review_corrections import facts_for_observations
+        facts.extend((_loaded['corrections'] if _loaded is not None else facts_for_observations(session,[observation.id],as_of)).get(observation.id,[]))
         market = _loaded["market"] if _loaded is not None else session.exec(select(MarketDailyStat).where(MarketDailyStat.stat_date == as_of)).first()
         if market:
             facts.append({"id": "market", "label": "所选日市场背景（不用于证明个股因果）", "value": {
@@ -289,6 +293,8 @@ def audit_view(audit, context_hash, current_context=None):
                 changes.append(label)
         if any(key.startswith('factor-') and before.get(key) != value for key, value in after.items()):
             changes.append('复权因子已补齐或更新')
+        if {key:value for key,value in before.items() if key.startswith('correction-')} != {key:value for key,value in after.items() if key.startswith('correction-')}:
+            changes.append('人工确认的纠正说明已更新或撤回')
         if audit.prompt_version != PROMPT_VERSION:
             changes.append('审阅口径已升级，旧意见保留原始依据')
     return {"id": audit.id, "date": str(audit.review_date), "created_at": iso_time(audit.created_at),

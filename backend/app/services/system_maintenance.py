@@ -6,7 +6,7 @@ import threading
 from datetime import datetime, timedelta
 from typing import Literal
 
-from .job_monitor import process_alive, process_identity
+from .job_monitor import process_alive, process_identity,waiting_expired
 from .runtime_state import BACKEND_DIR, RuntimeStore, redact, utc_now
 
 try:
@@ -55,6 +55,8 @@ def maintenance_status(action, store=None, now=None):
     status, message = 'idle', '尚未发起维护；可按需要手动执行。'
     if current:
         status, message = current.get('status', 'unknown'), redact(current.get('message', ''))
+        if status=='waiting' and waiting_expired(current,now):
+            status,message='unknown',f"已过预计就绪时间，仍有 {current.get('waiting',0)} 项待补齐。"
         if status == 'running' and not process_alive(current):
             status, message = 'interrupted', '任务进程已退出，未取得完成记录；可重新发起。'
     elif receipt:

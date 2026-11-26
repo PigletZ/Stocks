@@ -925,6 +925,7 @@ export interface ReviewAudit {
 }
 export interface ReviewAuditFeedback {
   id: number; audit_id: number; section: keyof ReviewAudit['result']; item_index: number
+  reuse_for_audit:boolean;reused_note:string|null;correction_id:number|null;context_changed?:boolean
   rating: 'helpful' | 'misunderstood' | 'insufficient'; comment: string; date: string; created_at: string; revisions: number
 }
 export interface ReviewFeedbackSummary { rated_count: number; helpful: number; misunderstood: number; insufficient: number; note: string }
@@ -999,9 +1000,13 @@ export async function syncReviewFactors(id:number,date:string):Promise<{written_
   const {data}=await api.post(`/review/observations/${id}/factors`,null,{params:{date},timeout:90000})
   return data
 }
-export async function saveReviewAuditFeedback(id:number,auditId:number,body:Pick<ReviewAuditFeedback,'date'|'section'|'item_index'|'rating'|'comment'>):Promise<ReviewAuditFeedback> {
+export async function saveReviewAuditFeedback(id:number,auditId:number,body:Pick<ReviewAuditFeedback,'date'|'section'|'item_index'|'rating'|'comment'>&{reuse_for_audit?:boolean}):Promise<ReviewAuditFeedback> {
   const {data}=await api.post(`/review/observations/${id}/audits/${auditId}/feedback`,body)
   return data
+}
+export interface ReviewCorrectionHistory {items:{id:number;active:boolean;note:string;date:string;feedback_id:number;created_at:string}[];total:number;page:number;pages:number}
+export async function fetchReviewCorrectionHistory(id:number,auditId:number,date:string,section:keyof ReviewAudit['result'],item_index:number,page:number,signal?:AbortSignal):Promise<ReviewCorrectionHistory>{
+  return (await api.get(`/review/observations/${id}/audits/${auditId}/corrections`,{params:{date,section,item_index,page},signal})).data
 }
 export async function fetchReviewAuditFeedbackHistory(id:number,auditId:number,date:string,section:keyof ReviewAudit['result'],item_index:number,page:number,signal?:AbortSignal):Promise<ReviewFeedbackHistory> {
   const {data}=await api.get(`/review/observations/${id}/audits/${auditId}/feedback`,{params:{date,section,item_index,page},signal})
@@ -1144,7 +1149,7 @@ export async function deleteHolding(code: string): Promise<{ message: string }> 
 
 // ==================== 系统管理 ====================
 
-export type SystemState = 'ok' | 'warning' | 'error' | 'unknown' | 'cached' | 'empty' | 'partial' | 'stale' | 'success' | 'running' | 'skipped' | 'missing' | 'unverified' | 'interrupted' | 'idle' | 'queued'
+export type SystemState = 'ok' | 'warning' | 'error' | 'unknown' | 'cached' | 'empty' | 'partial' | 'stale' | 'success' | 'running' | 'skipped' | 'missing' | 'unverified' | 'interrupted' | 'idle' | 'queued' | 'waiting'
 
 export interface SystemDbInfo {
   name: string | null
@@ -1172,8 +1177,8 @@ export interface TableFreshness {
 
 export interface JobRunRecord {
   started_at: string; finished_at: string | null; updated_at?: string; status: SystemState
-  succeeded: number; failed: number; deferred?: number; skipped: number; written_rows: number; unit?: string; message: string
-  errors?: string[]; deferred_items?: string[]; history?: JobRunRecord[]
+  succeeded: number; failed: number; deferred?: number; waiting?:number;waiting_until?:string;skipped: number; written_rows: number; unit?: string; message: string
+  errors?: string[]; deferred_items?: string[];waiting_items?:string[]; history?: JobRunRecord[]
 }
 export interface CronJobHealth {
   key: string

@@ -13,4 +13,4 @@
 
 接口均沿用登录鉴权：`/api/short-term/status`、`events`、`unread`、`events/{id}/history`、`events/{id}/state`、`settings`、`scan`。读取接口只读本地，不访问行情源或调用模型。手动扫描提交到独立后台任务，复用执行锁和 60 秒提交保护。
 
-上线前备份，执行 `PYTHONPATH=. python scripts/migrate_add_short_term.py`，再执行 `python scripts/install_short_term_monitor.py` 安装带标记的独立 cron 区块。默认连续交易时段逐分钟采样；16:35、18:35、20:35、21:35 收盘扫描。真实日历确认休市时跳过，保留原任务及时区检查。可执行 `python scripts/scan_short_term.py --mode close --history-days 5` 初始回看，最旧至最新依次处理，仅最新日期允许未读提醒。
+上线前备份，执行 `PYTHONPATH=. python scripts/migrate_add_short_term.py`，再执行 `python scripts/install_short_term_monitor.py` 安装带标记的独立 cron 区块。默认连续交易时段逐分钟采样，15:01 再补取最后闭合分钟；16:35、18:35、20:35、21:35、22:35、23:35 收盘扫描。真实日历确认休市时跳过，保留原任务及时区检查。可执行 `python scripts/scan_short_term.py --mode close --history-days 5` 初始回看，最旧至最新依次处理，仅最新日期允许未读提醒。

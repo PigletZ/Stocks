@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from .job_monitor import process_alive
+from .job_monitor import process_alive,waiting_expired
 from .runtime_state import RuntimeStore, redact
 
 JOBS = [
@@ -134,6 +134,8 @@ def job_statuses(now, log_dir, store=None, discovered=None):
                 item["message"] = "日志不可读取，执行结果待核验"
         if record:
             item.update(status=record.get("status", "unknown"), last_run=record.get("started_at"), message=redact(record.get("message", "")))
+            if item['status']=='waiting' and waiting_expired(record,now):
+                item.update(status='unknown',message=f"已过预计就绪时间，仍有 {record.get('waiting',0)} 项未取得补齐结果，请检查后续任务")
             if item["status"] == "running" and not process_alive(record):
                 item.update(status="interrupted", message="进程已退出，但没有完成记录；可能被终止或发生崩溃")
             previous = max((plan["previous"] for plan in schedules[job["key"]] if plan["previous"]), default=None, key=datetime.fromisoformat)

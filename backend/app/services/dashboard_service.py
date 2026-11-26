@@ -16,12 +16,12 @@ class DashboardService:
         """先取得完整新数据，再覆盖缓存；失败时保留已入库结果。"""
         from concurrent.futures import ThreadPoolExecutor
         service = OverviewService()
-        stats, authoritative = service.fetch_market_stats_for_date(d)
+        stats, authoritative = service.fetch_market_stats_for_date(d,strict=True)
         if not authoritative:
             raise ValueError("收盘统计尚未发布或拉取失败，已保留原有数据")
         with ThreadPoolExecutor(max_workers=5) as executor:
             data = list(executor.map(
-                lambda item: service.fetch_index_for_date(item[0], item[1], d),
+                lambda item: service.fetch_index_for_date(item[0], item[1], d,strict=True),
                 OverviewService.INDEX_CODES.items(),
             ))
         if not all(data):

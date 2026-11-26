@@ -54,7 +54,7 @@ def scan_intraday(session, client=None, etf=None, store=None, now=None):
     store,etf,now=store or RuntimeStore(),etf or EtfService(),now or utc_now()
     phase,expected=minute_phase(etf,now)
     config=preferences(store)
-    if not config.enabled or phase!='trading':
+    if not config.enabled or phase not in ('trading','closing'):
         return {'status':'skipped','phase':phase,'message':'监控已关闭或当前不在连续交易时段。','written':0}
     day=now.astimezone(SH).date()
     codes,refs,names=pool(session,day)
