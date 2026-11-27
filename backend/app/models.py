@@ -423,6 +423,34 @@ class SeatFollow(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class BroadFundBatch(SQLModel, table=True):
+    """宽基固定篮子的来源快照，修订追加版本，不覆盖旧触发依据。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    start_date: date = Field(index=True)
+    end_date: date = Field(index=True)
+    digest: str = Field(index=True)
+    data_json: str
+    raw_json: str
+    fetched_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class BroadFundEvidence(SQLModel, table=True):
+    """人工登记并核对的披露；当前撤回状态与原公告、报告期分别保留。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    evidence_key: str = Field(index=True)
+    subject: str
+    kind: str
+    publication_date: date = Field(index=True)
+    report_date: Optional[date] = None
+    codes_json: str = '[]'
+    source_url: str
+    title: str
+    summary: str
+    active: bool = True
+    withdraw_reason: str = ''
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class StrategyPickCache(SQLModel, table=True):
     __table_args__ = (UniqueConstraint("strategy_id", "trade_date", name="uix_strategy_pick_cache"),)
 

@@ -1227,7 +1227,7 @@ export interface PriceCoverage {
   windows: { days: number; base_date: string | null; valid: number; total: number; missing_factors: number; coverage_pct: number | null }[]
 }
 export interface MaintenanceJob {
-  action: 'daily' | 'factors' | 'backup' | 'short_term' | 'hot_money'; name: string; description: string; status: SystemState; message: string
+  action: 'daily' | 'factors' | 'backup' | 'short_term' | 'hot_money' | 'broad_funds'; name: string; description: string; status: SystemState; message: string
   requested_at: string | null; next_allowed_at: string | null; can_start: boolean; record: JobRunRecord | null
 }
 export async function fetchMaintenanceJobs(signal?: AbortSignal): Promise<MaintenanceJob[]> {
@@ -1335,4 +1335,50 @@ export async function syncHotMoney():Promise<{accepted:boolean;job:MaintenanceJo
 export async function saveSystemPreferences(preferences: SystemPreferences): Promise<SystemPreferences> {
   const { data } = await api.put('/system/preferences', preferences)
   return data
+}
+
+export interface BroadFundPoint {
+  date:string;close:string|null;amount:string|null;change_pct:string|null;amount_baseline:string|null
+  amount_multiple:string|null;amount_spike:boolean;shares:string|null;share_delta:string|null;nav:string|null
+  nav_ann_date:string|null;estimate:string|null;missing:string[];prior_date:string|null;prior_shares:string|null
+  factor:string|null;prior_factor:string|null
+}
+export interface BroadFundMember {
+  ts_code:string;code:string;name:string;group:string;benchmark:string;listed:string
+  market:BroadFundPoint|null;flow:BroadFundPoint|null;buyer:string
+}
+export interface BroadFundGroup {name:string;funds:number;flow_valid:number;estimate:string|null;positive_days:number;streak_ready:boolean;spikes:number}
+export interface BroadFundData {
+  requested_date:string;calendar_end:string;market_date:string|null;flow_date:string|null;batch_id:number;fetched_at:string
+  basket_version:string;members:BroadFundMember[];groups:BroadFundGroup[];market_valid:number;flow_valid:number;total:number
+  estimate:string|null;spikes:number;spike_groups:number;source_ready:boolean;issues:string[];method:string;limitation:string;note:string
+}
+export interface BroadFundDashboard {
+  data:BroadFundData|null;requested_date:string;job:MaintenanceJob;evidence_count:number
+  check:null|{status:string;date:string;checked_at:string;waiting_until:string|null;message:string;flow_valid:number}
+  basket:{ts_code:string;group:string}[]
+}
+export interface FundEvidence {
+  id:number;key:string;subject:string;kind:'bought'|'plan'|'holding';publication_date:string;report_date:string|null;codes:string[]
+  source_url:string;title:string;summary:string;active:boolean;withdraw_reason:string;created_at:string;verification:string
+}
+export interface FundEvidenceInput {
+  subject:string;kind:'bought'|'plan'|'holding';publication_date:string;report_date:string|null;codes:string[]
+  source_url:string;title:string;summary:string;confirmed:boolean
+}
+export interface FundEvidencePage {items:FundEvidence[];total:number;page:number;pages:number;note?:string}
+export async function fetchBroadFunds(date:string,batch_id:number|undefined,signal?:AbortSignal):Promise<BroadFundDashboard>{
+  return (await api.get('/etfs/funds',{params:{date,batch_id},signal})).data
+}
+export async function fetchBroadFundHistory(code:string,date:string,batch_id:number,signal?:AbortSignal):Promise<{code:string;batch_id:number;fetched_at:string;items:BroadFundPoint[];method:string;limitation:string}>{
+  return (await api.get('/etfs/funds/history/'+code,{params:{date,batch_id},signal})).data
+}
+export async function syncBroadFunds():Promise<{accepted:boolean;job:MaintenanceJob}>{return (await api.post('/etfs/funds/sync',undefined,{timeout:15000})).data}
+export async function fetchFundEvidence(date:string,page:number,include_withdrawn:boolean,scope:string,signal?:AbortSignal):Promise<FundEvidencePage>{
+  return (await api.get('/etfs/funds/evidence',{params:{date,page,include_withdrawn,scope},signal})).data
+}
+export async function saveFundEvidence(body:FundEvidenceInput):Promise<FundEvidence>{return (await api.post('/etfs/funds/evidence',body)).data}
+export async function withdrawFundEvidence(id:number,reason:string):Promise<FundEvidence>{return (await api.post(`/etfs/funds/evidence/${id}/withdraw`,{reason})).data}
+export async function fetchFundEvidenceHistory(id:number,page:number,signal?:AbortSignal):Promise<FundEvidencePage>{
+  return (await api.get(`/etfs/funds/evidence/${id}/history`,{params:{page},signal})).data
 }

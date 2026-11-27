@@ -43,7 +43,7 @@ def scan():
 
 @router.get('/events')
 def events(target:date=Query(...,alias='date'),mode:Literal['close','intraday']='close',
-           category:Literal['all','market','sector','stock']='all',include_resolved:bool=False,
+           category:Literal['all','market','sector','stock','etf']='all',include_resolved:bool=False,
            unread_only:bool=False,include_ignored:bool=False,page:int=Query(1,ge=1),session:Session=Depends(get_session)):
     checked_day(target)
     rows=current_events(session,target,mode)

@@ -14,8 +14,10 @@ try:
 except ImportError:
     fcntl = None
 
-Action = Literal['daily', 'factors', 'backup', 'short_term', 'hot_money']
+Action = Literal['daily', 'factors', 'backup', 'short_term', 'hot_money', 'broad_funds']
 ACTIONS = {
+    'broad_funds': {'key':'broad-funds','name':'核对宽基资金资料','description':'核对固定宽基篮子的行情、份额、单位净值和复权因子；不调用 AI。',
+                    'script':'sync_broad_funds.py','args':['--refresh'],'log':'broad_funds.log'},
     'hot_money': {'key': 'hot-money', 'name': '核对游资披露', 'description': '核对最近三个真实交易日的龙虎榜与席位，保存订正版本；不调用 AI。',
                   'script': 'sync_hot_money.py', 'args': ['--refresh'], 'log': 'hot_money.log'},
     'short_term': {'key':'short-term','name':'检测短线异动','description':'检测当前可用的关注池分钟行情及最近收盘资料。',
