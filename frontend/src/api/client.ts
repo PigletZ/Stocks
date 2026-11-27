@@ -1227,7 +1227,7 @@ export interface PriceCoverage {
   windows: { days: number; base_date: string | null; valid: number; total: number; missing_factors: number; coverage_pct: number | null }[]
 }
 export interface MaintenanceJob {
-  action: 'daily' | 'factors' | 'backup' | 'short_term'; name: string; description: string; status: SystemState; message: string
+  action: 'daily' | 'factors' | 'backup' | 'short_term' | 'hot_money'; name: string; description: string; status: SystemState; message: string
   requested_at: string | null; next_allowed_at: string | null; can_start: boolean; record: JobRunRecord | null
 }
 export async function fetchMaintenanceJobs(signal?: AbortSignal): Promise<MaintenanceJob[]> {
@@ -1245,7 +1245,7 @@ export interface ShortTermEvent {
   id:number; key:string; date:string; mode:'intraday'|'close'; category:string; subject:string; kind:string; title:string
   level:number; cycle:number; active:boolean; detected_at:string; unread:boolean; ignored:boolean; cooling:boolean; notify:boolean
   snapshot:{actual:string; baseline:string; unit:string; rule:string; observed_at:string; source:string; name:string|null;
-    scope_note:string; observations:{id:number;date:string;reason:string}[]}
+    scope_note:string; batch_id?:number; observations:{id:number;date:string;reason:string}[]}
 }
 export interface ShortTermEvents {
   date:string; mode:string; counts:{active:number;unread:number;total:number}; items:ShortTermEvent[]; total:number;page:number;pages:number
@@ -1281,6 +1281,55 @@ export async function fetchSystemStatus(signal?: AbortSignal): Promise<SystemSta
 export async function checkSystemDataSource(signal?: AbortSignal): Promise<DataSourceReport> {
   const { data } = await api.post('/system/diagnostics', undefined, { signal, timeout: 120000 })
   return data
+}
+
+export interface SeatFollow { kind:'person'|'seat'; subject:string; created_at:string }
+export interface DisclosureSeat {
+  seat:string;buy:string;sell:string;net:string;ordinal:number;sides:string[];type:string
+  names:string[];association:'catalog'|'ambiguous'|'unmapped'|'anonymous'|'collective';conflict:boolean
+}
+export interface SeatReport {
+  code:string;ts_code:string;name:string;period:'day'|'multi';reason:string;buy:string|null;sell:string|null;net:string|null
+  close:string|null;change_pct:string|null;warnings:string[];selected:boolean;seats:DisclosureSeat[]
+}
+export interface SeatStock extends Omit<SeatReport,'seats'> {
+  date:string;batch_id:number;fetched_at:string;watched:boolean;followed:boolean;height:number|null
+  observations:{id:number;date:string;reason:string}[];names:string[];institution_net:string|null;tags:string[]
+}
+export interface SeatCoverage { calendar_known:boolean;expected_dates:string[];cached_dates:string[];complete:boolean }
+export interface HotMoneyDashboard {
+  date:string;batch_id:number|null;fetched_at:string|null;catalog_id:number|null;catalog_at:string|null
+  quality:null|{reports:number;stocks:number;warnings:number;mapped_records:number;seat_records:number}
+  coverage:SeatCoverage;counts:{stocks:number;mine:number;followed:number;large_sell:number};focus:SeatStock[]
+  items:SeatStock[];total:number;page:number;pages:number;method:string;limitation:string;scope_note:string
+  follows:SeatFollow[];job:MaintenanceJob;check:null|{status:string;checked_at:string;message:string}
+}
+export interface SeatStockDetail {
+  date:string;code:string;batch_id:number;fetched_at:string;catalog_id:number;catalog_at:string;reports:SeatReport[]
+  versions:{id:number;fetched_at:string}[];raw:Record<string,unknown[]>;method:string;limitation:string
+}
+export interface SeatHistory {
+  kind:'person'|'seat';subject:string;days:number;coverage:SeatCoverage;method:string;limitation:string
+  items:{date:string;code:string;name:string;period:'day'|'multi';reason:string;batch_id:number;catalog_id:number
+    fetched_at:string;buy:string;sell:string;net:string;seats:string[]}[]
+}
+export async function fetchHotMoney(params:{date:string;scope:string;period:string;search:string;page:number},signal?:AbortSignal):Promise<HotMoneyDashboard>{
+  return (await api.get('/hot-money/dashboard',{params,signal})).data
+}
+export async function fetchSeatStock(code:string,date:string,batch_id?:number,signal?:AbortSignal):Promise<SeatStockDetail>{
+  return (await api.get('/hot-money/stocks/'+code,{params:{date,batch_id},signal})).data
+}
+export async function fetchSeatHistory(date:string,kind:'person'|'seat',subject:string,days:number,signal?:AbortSignal):Promise<SeatHistory>{
+  return (await api.get('/hot-money/history',{params:{date,kind,subject,days},signal})).data
+}
+export async function fetchHotMoneyCatalog(signal?:AbortSignal):Promise<{id:number|null;created_at:string|null;items:{name:string;orgs:string[]}[];follows:SeatFollow[]}>{
+  return (await api.get('/hot-money/catalog',{signal})).data
+}
+export async function saveSeatFollow(kind:'person'|'seat',subject:string,active:boolean):Promise<{items:SeatFollow[]}>{
+  return (await api.put('/hot-money/follow',{kind,subject,active})).data
+}
+export async function syncHotMoney():Promise<{accepted:boolean;job:MaintenanceJob}>{
+  return (await api.post('/hot-money/sync',undefined,{timeout:15000})).data
 }
 
 export async function saveSystemPreferences(preferences: SystemPreferences): Promise<SystemPreferences> {

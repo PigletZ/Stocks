@@ -9,6 +9,7 @@ from .job_monitor import process_alive,waiting_expired
 from .runtime_state import RuntimeStore, redact
 
 JOBS = [
+    {'key': 'hot-money', 'name': '游资动向采集', 'impact': '龙虎榜席位、关注提醒与复盘证据', 'log': 'hot_money.log'},
     {'key':'short-term','name':'短线异动监测','impact':'关注池分钟异动、收盘情绪与板块','log':'short_term.log'},
     {"key": "daily", "name": "市场与复盘数据", "impact": "概览、复盘、板块", "log": "import_daily.log"},
     {"key": "quotes", "name": "个股行情快照", "impact": "个股表现、复盘验证", "log": "sync_quotes.log"},
@@ -86,7 +87,9 @@ def discover_schedules(now):
             if len(parts) != 6:
                 continue
             command = parts[5]
-            if 'scripts/scan_short_term.py' in command:
+            if 'scripts/sync_hot_money.py' in command:
+                keys = ['hot-money']
+            elif 'scripts/scan_short_term.py' in command:
                 keys=['short-term']
             elif "scripts/import_daily.py" in command:
                 keys = ["daily"]

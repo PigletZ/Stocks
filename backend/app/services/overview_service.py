@@ -388,7 +388,8 @@ class OverviewService:
 
         # 标准化字段
         # Tushare top_list 的 net_amount 单位为"元"，直接保留
-        df = df.copy()
+        from .seat_disclosures import canonical_top_frame
+        df = canonical_top_frame(df)
         df["code"] = df["ts_code"].astype(str).apply(self._ts_code_to_code)
 
         # 基础过滤：ST、退市、科创、创业、北交、次新股

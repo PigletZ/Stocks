@@ -27,7 +27,7 @@
       <LimitTab v-if="activeTab === 'limit-up'" title="涨停股票" type="up" :trade-date="selectedDate" @add-watchlist="addToWl" />
       <LimitLadderTab v-if="activeTab === 'ladder'" :trade-date="selectedDate" @synced="loadDashboard($event)" />
       <LimitTab v-if="activeTab === 'limit-down'" title="跌停股票" type="down" :trade-date="selectedDate" @add-watchlist="addToWl" />
-      <DragonTigerTab v-if="activeTab === 'dragon-tiger'" :trade-date="selectedDate" @add-watchlist="addToWl" />
+      <HotMoneyTab v-if="activeTab === 'dragon-tiger'" :date="selectedDate" @add-watchlist="addToWl" @changed="refreshUnread" />
       <TopGainersTab v-if="activeTab === 'top-gainers'" :trade-date="selectedDate" @add-watchlist="addToWl" />
     </div>
   </div>
@@ -38,7 +38,6 @@ import { ref, computed, defineAsyncComponent, onUnmounted, onMounted, watch } fr
 import { useRoute, useRouter } from 'vue-router'
 import DailyTab from '../components/overview/DailyTab.vue'
 import LimitTab from '../components/overview/LimitTab.vue'
-import DragonTigerTab from '../components/overview/DragonTigerTab.vue'
 import TopGainersTab from '../components/overview/TopGainersTab.vue'
 import { fetchOverviewDashboard, addToWatchlist,fetchShortTermUnread } from '../api/client'
 import type { OverviewDashboard } from '../api/client'
@@ -47,6 +46,7 @@ const route = useRoute()
 const router = useRouter()
 const LimitLadderTab = defineAsyncComponent(() => import('../components/overview/LimitLadderTab.vue'))
 const ShortTermTab=defineAsyncComponent(()=>import('../components/overview/ShortTermTab.vue'))
+const HotMoneyTab=defineAsyncComponent(()=>import('../components/overview/HotMoneyTab.vue'))
 const anomalyMode=computed<'intraday'|'close'>(()=>route.query.mode==='close'?'close':'intraday')
 const isLiveAnomaly=computed(()=>activeTab.value==='short-term' && anomalyMode.value==='intraday')
 const shortUnread=ref<number|null>(null)
@@ -61,7 +61,7 @@ const tabs = [
   { key: 'daily', label: '日概览' }, { key: 'limit-up', label: '涨停' },
   {key:'short-term',label:'短线异动'},
   { key: 'ladder', label: '连板天梯' },
-  { key: 'limit-down', label: '跌停' }, { key: 'dragon-tiger', label: '龙虎榜' },
+  { key: 'limit-down', label: '跌停' }, { key: 'dragon-tiger', label: '游资动向' },
   { key: 'top-gainers', label: '涨幅榜' },
 ]
 const activeTab = computed(() => tabs.find(tab => tab.key === route.query.tab)?.key || 'daily')

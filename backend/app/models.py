@@ -395,6 +395,34 @@ class DragonTigerDaily(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class HotMoneyCatalog(SQLModel, table=True):
+    """采集时的名录快照；简称关联不是实名身份或历史归属证明。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    digest: str = Field(index=True, unique=True)
+    entries_json: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class SeatDisclosureBatch(SQLModel, table=True):
+    """完整校验后追加的龙虎榜披露版本，保存原始单据和选单口径。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    trade_date: date = Field(index=True)
+    digest: str = Field(index=True)
+    catalog_id: int = Field(foreign_key="hotmoneycatalog.id")
+    raw_json: str
+    payload_json: str
+    fetched_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class SeatFollow(SQLModel, table=True):
+    """关注/取消追加留痕；不将当前关注清单冒充历史投资范围。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    kind: str = Field(index=True)
+    subject: str = Field(index=True)
+    active: bool
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class StrategyPickCache(SQLModel, table=True):
     __table_args__ = (UniqueConstraint("strategy_id", "trade_date", name="uix_strategy_pick_cache"),)
 

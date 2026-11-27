@@ -105,20 +105,11 @@ class ReviewService:
                 raise RuntimeError("龙虎榜格式或日期异常，已保留旧数据")
             return 0
 
-        # 同一只票当天可能多条（不同上榜原因），按 code 聚合
+        # 同股不同原因及单日/累计不能相加，每股只选一份单据兼容旧缓存。
+        from .seat_disclosures import canonical_top_frame
+        df = canonical_top_frame(df)
         df["code"] = df["ts_code"].astype(str).str.split(".").str[0]
-        agg = df.groupby("code", as_index=False).agg({
-            "name": "first",
-            "close": "first",
-            "pct_change": "first",
-            "turnover_rate": "first",
-            "amount": "sum",
-            "l_buy": "sum",
-            "l_sell": "sum",
-            "net_amount": "sum",
-            "net_rate": "first",
-            "reason": lambda s: "；".join(sorted(set(str(x) for x in s if pd.notna(x)))),
-        })
+        agg = df
 
         session.exec(delete(DragonTigerDaily).where(DragonTigerDaily.trade_date == target_date))
         rows = []
