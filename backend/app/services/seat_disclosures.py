@@ -111,12 +111,20 @@ def top_records(frame, day):
     if rows is None:
         return None
     for row in rows:
-        for key in ('close', 'l_buy', 'l_sell'):
-            row[key] = number(row[key], True)
-        for key in ('pct_change', 'net_amount'):
-            row[key] = number(row[key])
-        if abs(Decimal(row['l_buy'])-Decimal(row['l_sell'])-Decimal(row['net_amount'])) > Decimal('1'):
-            raise ValueError('龙虎榜买卖总额不能对齐，保留旧版本')
+        row['total_issue'] = None
+        try:
+            row['l_buy'], row['l_sell'] = number(row['l_buy'], True), number(row['l_sell'], True)
+            row['net_amount'] = number(row['net_amount'])
+            if abs(Decimal(row['l_buy'])-Decimal(row['l_sell'])-Decimal(row['net_amount'])) > Decimal('1'):
+                raise ValueError('龙虎榜买卖总额不能对齐')
+        except ValueError:
+            row['l_buy'] = row['l_sell'] = row['net_amount'] = None
+            row['total_issue'] = '该单个股源总额缺失或不能对齐，买卖汇总保留未知；原值在原始记录中核对'
+        for key in ('close', 'pct_change'):
+            try:
+                row[key] = number(row[key], key == 'close')
+            except ValueError:
+                row[key] = None
         if not isinstance(row['name'], str) or not row['name'].strip():
             raise ValueError('龙虎榜股票名称缺失')
     # 数据商重复返回完全相同的披露单只保留一份；原始接口响应仍由批次存档。
@@ -184,6 +192,8 @@ def build_payload(top, seats, entries):
         warnings = []
         if not top_row:
             warnings.append('该披露原因缺少可对齐的个股总额，汇总金额保留未知')
+        elif top_row.get('total_issue'):
+            warnings.append(top_row['total_issue'])
         if not resolved:
             warnings.append('该披露原因尚未取得席位明细')
         if any(row['conflict'] for row in resolved):

@@ -101,9 +101,12 @@ class HotMoneyTests(unittest.TestCase):
 
     def test_decimal_finite_nonnegative_and_wrong_date_rejected(self):
         top, seat = self.source()
-        for key, value in [('l_buy', '-1'), ('net_amount', 'NaN'), ('trade_date', '20270101')]:
-            with self.assertRaises(ValueError):
-                top_records(pd.DataFrame([{**top, key: value}]), self.now.date())
+        for key, value in [('l_buy', '-1'), ('net_amount', 'NaN')]:
+            broken = top_records(pd.DataFrame([{**top, key: value}]), self.now.date())[0]
+            self.assertIsNone(broken['net_amount'])
+            self.assertTrue(broken['total_issue'])
+        with self.assertRaises(ValueError):
+            top_records(pd.DataFrame([{**top, 'trade_date': '20270101'}]), self.now.date())
         with self.assertRaises(ValueError):
             seat_records(pd.DataFrame([{**seat, 'side': '2'}]), self.now.date())
         broken = seat_records(pd.DataFrame([{**seat, 'net_buy': '9'}]), self.now.date())[0]
@@ -119,6 +122,15 @@ class HotMoneyTests(unittest.TestCase):
             self.assertIsNone(report['seats'][0]['net'])
             self.assertTrue(report['seats'][0]['amount_issue'])
             self.assertTrue(report['warnings'])
+
+    def test_inconsistent_stock_totals_only_quarantine_affected_disclosure(self):
+        top, seat = self.source()
+        bad = {**top, 'net_amount': '123'}
+        records = top_records(pd.DataFrame([bad]), self.now.date())
+        report = build_payload(records, [seat], [])['reports'][0]
+        self.assertIsNone(report['net'])
+        self.assertTrue(report['warnings'])
+        self.assertEqual(report['seats'][0]['net'], '10000000')
 
     def test_convertible_bonds_excluded(self):
         top, seat = self.source()

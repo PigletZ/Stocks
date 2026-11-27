@@ -1,7 +1,7 @@
 """盘后同步龙虎榜单据和名录；页面读取本地版本，不回源，不调用 AI。"""
 import argparse
 import sys
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -18,9 +18,12 @@ from app.services.tushare_client import TushareClient
 
 
 @tracked_job('hot-money')
-def run(days=3, refresh=False, history=False):
+def run(days=3, refresh=False, history=False, end_date=None):
     store, now = RuntimeStore(), utc_now()
-    target = collection_target(now)
+    cutoff = collection_target(now)
+    if end_date and end_date > cutoff:
+        raise ValueError('初始化截止日期不能超过最近已收盘的自然日')
+    target = end_date or cutoff
     dates = OverviewService().fetch_trade_dates(target-timedelta(days=100), target)[-days:]
     if not dates:
         raise RuntimeError('尚未取得官方交易日历，未推测工作日')
@@ -60,5 +63,6 @@ if __name__ == '__main__':
     parser.add_argument('--days', type=int, choices=range(1, 21), default=3)
     parser.add_argument('--refresh', action='store_true')
     parser.add_argument('--history', action='store_true', help='初始化历史，不产生新行情提醒')
+    parser.add_argument('--end-date', type=date.fromisoformat, help='仅用于历史初始化，指定交易日查询的截止日')
     args = parser.parse_args()
-    run(args.days, args.refresh, args.history)
+    run(args.days, args.refresh, args.history, args.end_date)
