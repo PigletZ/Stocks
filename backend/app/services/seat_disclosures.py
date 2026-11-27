@@ -135,10 +135,17 @@ def seat_records(frame, day):
         row['side'] = str(row['side'])
         if row['side'] not in ('0', '1'):
             raise ValueError('买卖榜方向异常')
-        row['buy'], row['sell'] = number(row['buy'], True), number(row['sell'], True)
-        row['net_buy'] = number(row['net_buy'])
-        if abs(Decimal(row['buy'])-Decimal(row['sell'])-Decimal(row['net_buy'])) > Decimal('1'):
-            raise ValueError('席位净额不能对齐，保留旧版本')
+        row['amount_issue'] = None
+        try:
+            row['buy'], row['sell'] = number(row['buy'], True), number(row['sell'], True)
+            row['net_buy'] = number(row['net_buy'])
+            if abs(Decimal(row['buy'])-Decimal(row['sell'])-Decimal(row['net_buy'])) > Decimal('1'):
+                raise ValueError('席位净额不能对齐')
+        except ValueError:
+            # 某些交易所披露缺少另一侧金额，或数据商给出异常值，绝不填成 0。
+            # 原值保存在批次 raw_json；该席位本次金额保留未知，不影响其他有效披露单。
+            row['buy'] = row['sell'] = row['net_buy'] = None
+            row['amount_issue'] = '源金额缺失、为负或买卖净额不符，本笔金额未知，未计入席位汇总'
     return sorted(rows, key=dumps)
 
 
@@ -148,12 +155,12 @@ def unique_seats(rows, index):
     for row in rows:
         grouped[(row['exalter'], row['buy'], row['sell'], row['net_buy'])].append(row)
     result = []
-    for (seat, buy, sell, net), group in sorted(grouped.items()):
+    for (seat, buy, sell, net), group in sorted(grouped.items(), key=lambda item: dumps(item[0])):
         sides = Counter(row['side'] for row in group)
         count = max(sides.values()) if seat in ANONYMOUS else 1
         for ordinal in range(count):
             result.append({'seat': seat, 'buy': buy, 'sell': sell, 'net': net, 'ordinal': ordinal,
-                           'sides': sorted(sides), **associate(seat, index)})
+                           'sides': sorted(sides), 'amount_issue': group[0].get('amount_issue'), **associate(seat, index)})
     # 同一具名席位在一份单据出现不同金额时不猜测合并，保留所有明细并标注冲突。
     counts = Counter(row['seat'] for row in result if row['type'] == 'seat')
     for row in result:
@@ -181,6 +188,8 @@ def build_payload(top, seats, entries):
             warnings.append('该披露原因尚未取得席位明细')
         if any(row['conflict'] for row in resolved):
             warnings.append('同一营业部有金额冲突，保留原记录，不推断净额')
+        if any(row['amount_issue'] for row in resolved):
+            warnings.append('部分席位源金额异常或缺失，已标为未知；不补零、不计入席位金额汇总')
         stocks.append({'code': ts_code.split('.')[0], 'ts_code': ts_code,
                        'name': totals[0]['name'] if totals else ts_code.split('.')[0],
                        'period': period(reason), 'reason': reason,

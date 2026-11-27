@@ -36,8 +36,7 @@ def load_window(session, day, size=20):
         batches = [row for row in batches if row.trade_date in dates]
     return batches, {'calendar_known': bool(calendar), 'expected_dates': [str(d) for d in dates],
         'cached_dates': [str(row.trade_date) for row in reversed(batches)],
-        'complete': len(dates) == size and set(dates) == {row.trade_date for row in batches}
-            and all(json.loads(row.payload_json)['quality']['warnings'] == 0 for row in batches)}
+        'complete': len(dates) == size and set(dates) == {row.trade_date for row in batches}}
 
 
 def follows(session):
@@ -136,7 +135,7 @@ def enrich(session, batch, following=None, watch_pool=None):
             'observations': refs.get(raw['code'], []), 'height': heights.get(raw['code']),
             'names': sorted({name for seat in raw['seats'] if seat['association'] == 'catalog' for name in seat['names']}),
             'institution_net': str(sum((Decimal(seat['net']) for seat in raw['seats'] if seat['type'] == 'institution'), Decimal(0)))
-                if raw['seats'] else None,
+                if raw['seats'] and all(seat['net'] is not None for seat in raw['seats'] if seat['type'] == 'institution') else None,
             'tags': []}
         result.append(row)
     return result
@@ -214,7 +213,7 @@ def seat_history(session, day, kind, subject, days=20):
         for report in json.loads(batch.payload_json)['reports']:
             if not report['selected']:
                 continue
-            selected = [seat for seat in report['seats'] if seat['type'] == 'seat' and not seat['conflict'] and
+            selected = [seat for seat in report['seats'] if seat['type'] == 'seat' and not seat['conflict'] and seat['net'] is not None and
                 (seat['seat'] == subject if kind == 'seat' else seat['association'] == 'catalog' and subject in seat['names'])]
             if selected:
                 records.append({'date': str(batch.trade_date), 'code': report['code'], 'name': report['name'],

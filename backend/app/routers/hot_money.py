@@ -1,5 +1,5 @@
 from datetime import date
-from typing import Literal
+from typing import Literal, Optional
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -56,7 +56,7 @@ def follow(body: FollowIn, session: Session = Depends(get_session)):
 
 
 @router.get('/stocks/{code}')
-def stock_detail(code: str, target: date = Query(..., alias='date'), batch_id: int | None = Query(None, ge=1),
+def stock_detail(code: str, target: date = Query(..., alias='date'), batch_id: Optional[int] = Query(None, ge=1),
                  session: Session = Depends(get_session)):
     checked(target)
     result = service.stock_detail(session, code, target, batch_id)

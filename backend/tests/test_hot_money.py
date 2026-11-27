@@ -106,8 +106,19 @@ class HotMoneyTests(unittest.TestCase):
                 top_records(pd.DataFrame([{**top, key: value}]), self.now.date())
         with self.assertRaises(ValueError):
             seat_records(pd.DataFrame([{**seat, 'side': '2'}]), self.now.date())
-        with self.assertRaises(ValueError):
-            seat_records(pd.DataFrame([{**seat, 'net_buy': '9'}]), self.now.date())
+        broken = seat_records(pd.DataFrame([{**seat, 'net_buy': '9'}]), self.now.date())[0]
+        self.assertIsNone(broken['net_buy'])
+        self.assertTrue(broken['amount_issue'])
+
+    def test_invalid_source_seat_amount_keeps_report_and_marks_unknown(self):
+        top, seat = self.source()
+        for bad in ({'buy': '-1'}, {'sell': float('nan')}, {'net_buy': float('inf')}):
+            payload = build_payload([top], seat_records(pd.DataFrame([{**seat, **bad}]), self.now.date()), [])
+            report = payload['reports'][0]
+            self.assertEqual(report['net'], '10000000')
+            self.assertIsNone(report['seats'][0]['net'])
+            self.assertTrue(report['seats'][0]['amount_issue'])
+            self.assertTrue(report['warnings'])
 
     def test_convertible_bonds_excluded(self):
         top, seat = self.source()
@@ -222,6 +233,17 @@ class HotMoneyTests(unittest.TestCase):
         self.assertEqual(updated_crontab(new, '/project/backend', '/project/venv/python'), new)
         self.assertIn('45 16,18,20,21,22,23', new)
         with self.assertRaises(ValueError):updated_crontab('# BEGIN stocks hot money monitor\n', '/x', '/y')
+
+    def test_routes_require_auth_and_reject_future_dates_before_reading(self):
+        from fastapi.testclient import TestClient
+        from app.main import app
+        from app.auth import create_token
+        from app.config import settings
+        client = TestClient(app)
+        self.assertEqual(client.get('/api/hot-money/dashboard?date=2099-01-01').status_code, 401)
+        client.headers['Authorization'] = 'Bearer '+create_token(settings.auth_username)['token']
+        self.assertEqual(client.get('/api/hot-money/dashboard?date=2099-01-01').status_code, 400)
+        self.assertEqual(client.get('/api/hot-money/history?date=2026-11-19&subject=fixture&days=7').status_code, 422)
 
 
 if __name__ == '__main__':unittest.main()

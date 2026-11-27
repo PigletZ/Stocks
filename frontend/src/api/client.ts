@@ -1285,7 +1285,7 @@ export async function checkSystemDataSource(signal?: AbortSignal): Promise<DataS
 
 export interface SeatFollow { kind:'person'|'seat'; subject:string; created_at:string }
 export interface DisclosureSeat {
-  seat:string;buy:string;sell:string;net:string;ordinal:number;sides:string[];type:string
+  seat:string;buy:string|null;sell:string|null;net:string|null;amount_issue:string|null;ordinal:number;sides:string[];type:string
   names:string[];association:'catalog'|'ambiguous'|'unmapped'|'anonymous'|'collective';conflict:boolean
 }
 export interface SeatReport {
