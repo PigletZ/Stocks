@@ -25,7 +25,8 @@ def run(days=3, refresh=False, history=False):
     if not dates:
         raise RuntimeError('尚未取得官方交易日历，未推测工作日')
     client = TushareClient(settings.tushare_token)
-    for day in dates:
+    # 首先取得最近可用日；某个历史日的坏单据不阻塞其余日期补漏。
+    for day in reversed(dates):
         key = 'seat-checked-'+day.strftime('%Y%m%d')
         check = store.read(key) or {}
         with Session(engine) as session:
@@ -50,7 +51,8 @@ def run(days=3, refresh=False, history=False):
         except Exception as error:
             store.write(key, {'status': 'error', 'checked_at': now.isoformat(), 'message': '采集或格式校验失败，保留旧版本，请核对任务结果'})
             record_progress(failed=1, message=f'{day} 披露同步失败：{error}')
-            break
+            if not isinstance(error, ValueError):
+                break
 
 
 if __name__ == '__main__':

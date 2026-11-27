@@ -250,5 +250,17 @@ class HotMoneyTests(unittest.TestCase):
             history(target=self.now.date(), subject='fixture', days=7, session=self.session)
         self.assertEqual(caught.exception.status_code, 422)
 
+    def test_collection_keeps_latest_first_and_continues_past_one_bad_history_date(self):
+        from scripts import sync_hot_money as job
+        dates = [self.now.date()-timedelta(days=offset) for offset in (2, 1, 0)]
+        def bad_day(session, day, client, now=None):
+            raise ValueError('bad source disclosure fixture')
+        with patch.object(job, 'engine', self.engine), patch.object(job, 'utc_now', return_value=self.now), \
+             patch.object(job, 'RuntimeStore', return_value=self.store), \
+             patch.object(job.OverviewService, 'fetch_trade_dates', return_value=dates), \
+             patch.object(job, 'sync_day', side_effect=bad_day) as sync:
+            job.run.__wrapped__(days=3, history=True)
+        self.assertEqual([call.args[1] for call in sync.call_args_list], list(reversed(dates)))
+
 
 if __name__ == '__main__':unittest.main()
