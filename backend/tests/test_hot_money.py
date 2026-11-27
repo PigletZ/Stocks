@@ -235,15 +235,20 @@ class HotMoneyTests(unittest.TestCase):
         with self.assertRaises(ValueError):updated_crontab('# BEGIN stocks hot money monitor\n', '/x', '/y')
 
     def test_routes_require_auth_and_reject_future_dates_before_reading(self):
-        from fastapi.testclient import TestClient
+        from datetime import date
+        from fastapi import HTTPException
         from app.main import app
-        from app.auth import create_token
-        from app.config import settings
-        client = TestClient(app)
-        self.assertEqual(client.get('/api/hot-money/dashboard?date=2099-01-01').status_code, 401)
-        client.headers['Authorization'] = 'Bearer '+create_token(settings.auth_username)['token']
-        self.assertEqual(client.get('/api/hot-money/dashboard?date=2099-01-01').status_code, 400)
-        self.assertEqual(client.get('/api/hot-money/history?date=2026-11-19&subject=fixture&days=7').status_code, 422)
+        from app.auth import require_auth
+        from app.routers.hot_money import dashboard, history
+        routes = [row for row in app.routes if row.path.startswith('/api/hot-money/')]
+        self.assertEqual(len(routes), 6)
+        self.assertTrue(all(any(dep.call == require_auth for dep in row.dependant.dependencies) for row in routes))
+        with self.assertRaises(HTTPException) as caught:
+            dashboard(target=date(2099, 1, 1), session=self.session)
+        self.assertEqual(caught.exception.status_code, 400)
+        with self.assertRaises(HTTPException) as caught:
+            history(target=self.now.date(), subject='fixture', days=7, session=self.session)
+        self.assertEqual(caught.exception.status_code, 422)
 
 
 if __name__ == '__main__':unittest.main()

@@ -254,10 +254,15 @@ def facts_for_codes(session, codes, day):
             if report['code'] not in codes or not report['selected']:
                 continue
             names = sorted({name for seat in report['seats'] if seat['association'] == 'catalog' for name in seat['names']})
+            seat_trades = [f"{seat['seat']}（{'匿名记录，不确认同一身份' if seat['type']=='institution' else seat['association']}）："
+                f"买入 {seat['buy'] or '未知'} 元，卖出 {seat['sell'] or '未知'} 元，净额 {seat['net'] or '未知'} 元"
+                + ('；同名金额有冲突，不作合计' if seat['conflict'] else '') for seat in report['seats'][:12]]
             facts[report['code']].append({'id': f"seat-flow-{batch.id}-{report['period']}",
                 'label': f"{batch.trade_date} {'单日' if report['period']=='day' else '累计'}龙虎榜披露（非持仓）",
                 'value': {'date': str(batch.trade_date), 'period_label': '单日' if report['period']=='day' else '多日累计',
                     'disclosed_net_yuan': report['net'], 'associated_names': names, 'disclosure_reason': report['reason'],
+                    'seat_trades': seat_trades, 'included_seat_records': len(seat_trades),
+                    'total_seat_records': len(report['seats']), 'warnings': report['warnings'],
                     'source_batch_id': batch.id, 'catalog_version': batch.catalog_id, 'recorded_at': iso(batch.fetched_at),
                     'method': METHOD, 'limitation': LIMITATION}})
     if batches:
